@@ -1,0 +1,93 @@
+# ==========================================
+# MLOps Project .gitignore
+# ==========================================
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.ipynb_checkpoints/
+.mypy_cache/
+.pyre/
+.pytype/
+.coverage
+.coverage.*
+htmlcov/
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+
+# --- Environments & Packages ---
+.venv/
+venv/
+ENV/
+env/
+bin/
+lib/
+lib64/
+include/
+share/
+pip-selfcheck.json
+*.egg-info/
+dist/
+build/
+eggs/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+
+# --- MLOps & ML Tracking (MLflow, etc.) ---
+mlruns/
+mlflow.db
+mlruns.db
+.evidently/
+lightning_logs/
+
+# --- DVC (Data Version Control) ---
+.dvc/cache/
+.dvc/tmp/
+.dvc/config.local
+.dvc/updater
+.dvc/updater.lock
+.dvc/state
+.dvc/lock
+
+# --- Data & Model Artifacts ---
+# Ignore model files and raw/processed datasets (tracked by DVC or generated)
+*.pkl
+*.joblib
+*.h5
+*.pb
+*.onnx
+*.npy
+*.npz
+
+# Keep data directory structure but ignore files inside
+**/data/raw/*
+!**/data/raw/.gitkeep
+**/data/processed/*
+!**/data/processed/.gitkeep
+
+# Ignore logs generated during serving/prediction
+**/data/serving_log.csv
+
+# --- IDEs and Editors ---
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+*~
+
+# --- System-specific ---
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini

@@ -1,0 +1,23 @@
+base:
+  project: customer-churn-prediction
+  random_state: 42
+
+data_prep:
+  test_size: 0.2
+  numerical_cols:
+    - tenure
+    - MonthlyCharges
+    - TotalCharges
+  categorical_cols:
+    - Contract
+    - InternetService
+    - TechSupport
+    - OnlineSecurity
+    - PaperlessBilling
+
+train:
+  estimator: RandomForestClassifier
+  n_estimators: 150
+  max_depth: 8
+  min_samples_split: 5
+  class_weight: balanced
