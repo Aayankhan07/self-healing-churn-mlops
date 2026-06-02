@@ -91,3 +91,10 @@ lightning_logs/
 Thumbs.db
 ehthumbs.db
 Desktop.ini
+
+# --- Serving & Deployment secrets/logs ---
+.env
+.env.*
+.env.local
+churnguard.db
+**/reports/drift_*.html

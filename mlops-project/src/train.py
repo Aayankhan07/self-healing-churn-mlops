@@ -1,114 +1,119 @@
-import os
-import yaml
-import joblib
+"""
+Training script. Run directly or via DVC.
+Logs everything to MLflow. Registers best model in MLflow registry.
+"""
 import pandas as pd
+import numpy as np
+import yaml
+import mlflow
+import mlflow.sklearn
+import optuna
+import logging
+from pathlib import Path
+from xgboost import XGBClassifier
 from sklearn.pipeline import Pipeline
-from sklearn.compose import ColumnTransformer
-from sklearn.preprocessing import StandardScaler, OneHotEncoder
-from sklearn.ensemble import RandomForestClassifier
+from imblearn.over_sampling import SMOTE
+from imblearn.pipeline import Pipeline as ImbPipeline
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-# Optional MLflow integration
-try:
-    import mlflow
-    import mlflow.sklearn
-    MLFLOW_AVAILABLE = True
-except ImportError:
-    MLFLOW_AVAILABLE = False
+from src.features import engineer_features, build_preprocessor, save_preprocessor
+from src.evaluate import compute_metrics, get_feature_names
 
-def load_params(params_path="params.yaml"):
-    with open(params_path, "r") as f:
-        return yaml.safe_load(f)
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+optuna.logging.set_verbosity(optuna.logging.WARNING)
 
-def train():
-    params = load_params()
-    
-    # Extract configs
-    random_state = params["base"]["random_state"]
-    num_cols = params["data_prep"]["numerical_cols"]
-    cat_cols = params["data_prep"]["categorical_cols"]
-    
-    n_estimators = params["train"]["n_estimators"]
-    max_depth = params["train"]["max_depth"]
-    min_samples_split = params["train"]["min_samples_split"]
-    class_weight = params["train"]["class_weight"]
 
-    # Load datasets
-    train_path = os.path.join("data", "processed", "train.csv")
-    if not os.path.exists(train_path):
-        raise FileNotFoundError(f"Prepared train data not found at {train_path}. Please run data prep stage first.")
+def load_split(path: str, target: str = "Churn"):
+    df = pd.read_csv(path)
+    return df.drop(columns=[target]), df[target]
 
-    print(f"Loading training data from {train_path}...")
-    df = pd.read_csv(train_path)
-    X = df.drop(columns=["target"])
-    y = df["target"]
 
-    # Create Scikit-learn Pipeline
-    print("Constructing pre-processing pipeline and column transformers...")
-    numerical_transformer = Pipeline(steps=[
-        ("scaler", StandardScaler())
-    ])
+def train(params: dict):
+    tracking_uri = params.get("mlflow_uri", "http://localhost:5000")
+    import socket
+    try:
+        with socket.create_connection(("localhost", 5000), timeout=0.5):
+            pass
+    except Exception:
+        tracking_uri = "sqlite:///mlflow.db"
+    mlflow.set_tracking_uri(tracking_uri)
+    mlflow.set_experiment("churnguard-churn-prediction")
 
-    categorical_transformer = Pipeline(steps=[
-        ("onehot", OneHotEncoder(handle_unknown="ignore"))
-    ])
+    X_train_raw, y_train = load_split("data/processed/train.csv")
+    X_val_raw, y_val = load_split("data/processed/val.csv")
 
-    preprocessor = ColumnTransformer(
-        transformers=[
-            ("num", numerical_transformer, num_cols),
-            ("cat", categorical_transformer, cat_cols)
-        ]
-    )
+    X_train = engineer_features(X_train_raw)
+    X_val = engineer_features(X_val_raw)
 
-    # Combine preprocessor with RandomForest classifier
-    full_pipeline = Pipeline(steps=[
-        ("preprocessor", preprocessor),
-        ("classifier", RandomForestClassifier(
-            n_estimators=n_estimators,
-            max_depth=max_depth,
-            min_samples_split=min_samples_split,
-            class_weight=class_weight,
-            random_state=random_state
-        ))
-    ])
+    preprocessor = build_preprocessor()
 
-    # Optionally log training parameters with MLflow
-    if MLFLOW_AVAILABLE:
-        try:
-            mlflow.set_experiment("customer-churn-prediction")
-            # If there's an active run, we can log to it, or start a new one
-            mlflow.start_run(run_name="RandomForest_Train")
-            
-            # Log params
-            mlflow.log_params({
-                "estimator": "RandomForestClassifier",
-                "n_estimators": n_estimators,
-                "max_depth": max_depth,
-                "min_samples_split": min_samples_split,
-                "class_weight": class_weight,
-                "random_state": random_state
-            })
-            print("MLflow experiment run started and parameters logged.")
-        except Exception as e:
-            print(f"MLflow tracking started with errors (falling back to standard local run): {e}")
+    def objective(trial):
+        model_params = {
+            "n_estimators": trial.suggest_int("n_estimators", 100, 500),
+            "max_depth": trial.suggest_int("max_depth", 3, 8),
+            "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.3, log=True),
+            "subsample": trial.suggest_float("subsample", 0.6, 1.0),
+            "colsample_bytree": trial.suggest_float("colsample_bytree", 0.6, 1.0),
+            "scale_pos_weight": trial.suggest_float("scale_pos_weight", 1.0, 5.0),
+            "eval_metric": "aucpr",
+            "use_label_encoder": False,
+            "random_state": 42,
+        }
+        pipeline = ImbPipeline([
+            ("preprocessor", preprocessor),
+            ("smote", SMOTE(random_state=42)),
+            ("model", XGBClassifier(**model_params))
+        ])
+        pipeline.fit(X_train, y_train)
+        metrics = compute_metrics(pipeline, X_val, y_val)
+        return metrics["f1"]
 
-    # Train model pipeline
-    print("Fitting Scikit-learn Pipeline...")
-    full_pipeline.fit(X, y)
+    study = optuna.create_study(direction="maximize")
+    study.optimize(objective, n_trials=30, show_progress_bar=True)
 
-    # Save model artifact locally (required by DVC)
-    os.makedirs("data", exist_ok=True)
-    model_path = os.path.join("data", "model.pkl")
-    joblib.dump(full_pipeline, model_path)
-    print(f"Pipeline successfully trained and saved locally to {model_path}")
+    best_params = study.best_params
+    best_params.update({"eval_metric": "aucpr", "use_label_encoder": False, "random_state": 42})
 
-    # Log model artifact with MLflow
-    if MLFLOW_AVAILABLE:
-        try:
-            mlflow.sklearn.log_model(full_pipeline, "model")
-            mlflow.end_run()
-            print("Model logged to MLflow Model Registry.")
-        except Exception as e:
-            print(f"Could not log model artifact to MLflow: {e}")
+    with mlflow.start_run(run_name="best_model"):
+        mlflow.log_params(best_params)
+
+        final_pipeline = ImbPipeline([
+            ("preprocessor", preprocessor),
+            ("smote", SMOTE(random_state=42)),
+            ("model", XGBClassifier(**best_params))
+        ])
+        final_pipeline.fit(X_train, y_train)
+
+        metrics = compute_metrics(final_pipeline, X_val, y_val)
+        mlflow.log_metrics(metrics)
+        logger.info(f"Val metrics: {metrics}")
+
+        # Save preprocessor separately for inference (needed for SHAP)
+        Path("models").mkdir(exist_ok=True)
+        save_preprocessor(preprocessor, "models/preprocessor.joblib")
+        import joblib
+        joblib.dump(final_pipeline, "models/model.joblib")
+        mlflow.log_artifact("models/preprocessor.joblib")
+        mlflow.log_artifact("models/model.joblib")
+
+        # Log + register full pipeline
+        mlflow.sklearn.log_model(final_pipeline, "model")
+        model_uri = f"runs:/{mlflow.active_run().info.run_id}/model"
+        mlflow.register_model(model_uri, "churn_model")
+
+        # Save metrics for DVC
+        Path("metrics").mkdir(exist_ok=True)
+        import json
+        with open("metrics/eval_metrics.json", "w") as f:
+            json.dump(metrics, f, indent=2)
+
+    logger.info("Training complete. Model registered.")
+
 
 if __name__ == "__main__":
-    train()
+    with open("params.yaml") as f:
+        params = yaml.safe_load(f)
+    train(params)

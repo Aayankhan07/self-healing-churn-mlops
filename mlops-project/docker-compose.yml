@@ -1,0 +1,27 @@
+version: "3.9"
+services:
+  api:
+    build: .
+    ports: ["8000:8000"]
+    environment:
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - DATABASE_URL=sqlite:///./churnguard.db
+    volumes:
+      - ./reports:/app/reports
+      - ./churnguard.db:/app/churnguard.db
+    depends_on: [mlflow]
+
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:latest
+    ports: ["5000:5000"]
+    command: mlflow server --host 0.0.0.0
+    volumes:
+      - ./mlruns:/mlruns
+
+  dashboard:
+    image: python:3.10-slim
+    ports: ["8501:8501"]
+    command: streamlit run dashboard/app.py
+    environment:
+      - API_URL=http://api:8000
+    depends_on: [api]
