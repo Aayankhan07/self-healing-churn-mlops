@@ -1,6 +1,8 @@
 """
 Evaluation utilities. Used in training and CI/CD performance gate.
 """
+
+import sys
 import numpy as np
 import pandas as pd
 import shap
@@ -8,15 +10,19 @@ import json
 import joblib
 from pathlib import Path
 from sklearn.metrics import (
-    f1_score, roc_auc_score, precision_score,
-    recall_score, average_precision_score, roc_curve
+    f1_score,
+    roc_auc_score,
+    precision_score,
+    recall_score,
+    average_precision_score,
+    roc_curve,
 )
 from typing import List, Dict, Any
-import sys
-from pathlib import Path
+
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from src.features import engineer_features
+from src.features import engineer_features  # noqa: E402
+
 
 def compute_metrics(model, X: pd.DataFrame, y: pd.Series) -> Dict[str, float]:
     y_pred = model.predict(X)
@@ -42,10 +48,7 @@ def get_feature_names(preprocessor) -> List[str]:
 
 
 def get_top_shap_factors(
-    model,
-    preprocessor,
-    X_raw: pd.DataFrame,
-    n: int = 3
+    model, preprocessor, X_raw: pd.DataFrame, n: int = 3
 ) -> List[Dict[str, Any]]:
     """
     Get top N SHAP factors for a single prediction row.
@@ -68,16 +71,31 @@ def get_top_shap_factors(
     factors = []
     for idx in top_idx:
         fname = feature_names[idx]
-        # Map back to original feature name (strip OHE prefix)
-        orig_name = fname.split("__")[-1].split("_")[0] if "__" in fname else fname
-        orig_val = X_raw.iloc[0].get(orig_name, "N/A")
+
+        orig_name = fname
+        orig_val = "N/A"
+
+        # Try exact match first (for numeric features)
+        if fname in X_raw.columns:
+            orig_name = fname
+            orig_val = X_raw.iloc[0][fname]
+        else:
+            # Try OHE match: search for original column that matches prefix of fname
+            for col in X_raw.columns:
+                if fname.startswith(col + "_"):
+                    orig_name = col
+                    orig_val = X_raw.iloc[0][col]
+                    break
+
         impact = sv[idx]
-        factors.append({
-            "feature": orig_name,
-            "value": str(orig_val),
-            "impact": f"{impact:+.3f}",
-            "direction": "increases_risk" if impact > 0 else "decreases_risk",
-        })
+        factors.append(
+            {
+                "feature": orig_name,
+                "value": str(orig_val),
+                "impact": f"{impact:+.3f}",
+                "direction": "increases_risk" if impact > 0 else "decreases_risk",
+            }
+        )
     return factors
 
 
@@ -107,10 +125,7 @@ if __name__ == "__main__":
     y_proba = pipeline.predict_proba(X_test)[:, 1]
     fpr, tpr, _ = roc_curve(y_test, y_proba)
     roc_data = {
-        "roc": [
-            {"fpr": round(f, 4), "tpr": round(t, 4)}
-            for f, t in zip(fpr, tpr)
-        ]
+        "roc": [{"fpr": round(f, 4), "tpr": round(t, 4)} for f, t in zip(fpr, tpr)]
     }
     with open("reports/roc_curve.json", "w") as f:
         json.dump(roc_data, f, indent=2)
