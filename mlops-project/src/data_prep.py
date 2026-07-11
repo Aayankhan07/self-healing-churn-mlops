@@ -2,8 +2,8 @@
 Load, clean, and split the Telco churn dataset.
 Tracked by DVC — outputs go to data/processed/.
 """
+
 import pandas as pd
-import numpy as np
 from pathlib import Path
 from sklearn.model_selection import train_test_split
 import yaml
@@ -38,17 +38,19 @@ def split_data(df: pd.DataFrame, params: dict) -> tuple:
     X = df.drop(columns=[target])
     y = df[target]
     X_train, X_temp, y_train, y_temp = train_test_split(
-        X, y,
+        X,
+        y,
         test_size=params["test_size"] + params["val_size"],
         random_state=params["random_seed"],
-        stratify=y
+        stratify=y,
     )
     val_ratio = params["val_size"] / (params["test_size"] + params["val_size"])
     X_val, X_test, y_val, y_test = train_test_split(
-        X_temp, y_temp,
+        X_temp,
+        y_temp,
         test_size=1 - val_ratio,
         random_state=params["random_seed"],
-        stratify=y_temp
+        stratify=y_temp,
     )
     logger.info(f"Split: train={len(X_train)}, val={len(X_val)}, test={len(X_test)}")
     return X_train, X_val, X_test, y_train, y_val, y_test
