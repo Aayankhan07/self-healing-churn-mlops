@@ -23,6 +23,8 @@ RUN pip install --no-cache-dir --upgrade pip \
 COPY params.yaml /app/
 COPY src/ /app/src/
 COPY api/ /app/api/
+COPY dashboard/ /app/dashboard/
+COPY models/ /app/models/
 
 # Copy data folder if it exists locally (so pre-trained model is included)
 # If not present, the container can still start, and model can be trained or downloaded.
