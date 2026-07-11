@@ -2,12 +2,12 @@
 Core inference logic. Called by API routes.
 Model and preprocessor loaded once at startup (cached in app.state).
 """
+
 import pandas as pd
-import numpy as np
 import hashlib
 import uuid
+import json
 from datetime import datetime
-from fastapi import Request
 from src.features import engineer_features
 from src.evaluate import get_top_shap_factors
 from api.schemas import PredictionOutput, ShapFactor
@@ -30,11 +30,25 @@ def hash_input(data: dict) -> str:
     return hashlib.sha256(str(sorted(data.items())).encode()).hexdigest()[:16]
 
 
-def run_single_prediction(request, customer_input, db) -> PredictionOutput:
+def run_single_prediction(
+    request, customer_input, db, healed_actions=None
+) -> PredictionOutput:
+    if healed_actions is None:
+        healed_actions = []
+
     # Use request.app.state or fallback to local files if model is not loaded in app.state
-    model = getattr(getattr(request, "app", request), "state", request).model
-    preprocessor = getattr(getattr(request, "app", request), "state", request).preprocessor
-    model_version = getattr(getattr(request, "app", request), "state", request).model_version
+    state = getattr(getattr(request, "app", request), "state", request)
+
+    # Extract model and preprocessor thread-safely
+    if hasattr(state, "model_lock") and hasattr(state, "model_container"):
+        with state.model_lock:
+            model = state.model_container["model"]
+            preprocessor = state.model_container["preprocessor"]
+            model_version = state.model_container["version"]
+    else:
+        model = getattr(state, "model", None)
+        preprocessor = getattr(state, "preprocessor", None)
+        model_version = getattr(state, "model_version", "unknown")
 
     # Convert to DataFrame
     data = customer_input.model_dump()
@@ -59,9 +73,23 @@ def run_single_prediction(request, customer_input, db) -> PredictionOutput:
     prediction_id = str(uuid.uuid4())
     input_hash = hash_input(data)
 
+    # Serialize features and healed actions
+    features_json = json.dumps(data)
+    healed_actions_json = json.dumps(healed_actions)
+
     # Log to DB
-    log_prediction(db, prediction_id, customer_id, input_hash,
-                   proba, risk_tier, prediction, model_version)
+    log_prediction(
+        db,
+        prediction_id,
+        customer_id,
+        input_hash,
+        proba,
+        risk_tier,
+        prediction,
+        model_version,
+        features_json=features_json,
+        healed_actions=healed_actions_json,
+    )
 
     return PredictionOutput(
         customer_id=customer_id,
@@ -72,4 +100,5 @@ def run_single_prediction(request, customer_input, db) -> PredictionOutput:
         model_version=model_version,
         prediction_id=prediction_id,
         timestamp=datetime.utcnow(),
+        healed_actions=healed_actions,
     )
