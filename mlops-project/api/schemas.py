@@ -2,8 +2,9 @@
 Pydantic v2 input/output schemas for all API endpoints.
 Strict validation — invalid inputs never reach the model.
 """
+
 from pydantic import BaseModel, Field, field_validator
-from typing import Optional, List, Literal, Any
+from typing import Optional, List, Literal
 from datetime import datetime
 
 
@@ -28,8 +29,10 @@ class CustomerInput(BaseModel):
     Contract: Literal["Month-to-month", "One year", "Two year"]
     PaperlessBilling: Literal["Yes", "No"]
     PaymentMethod: Literal[
-        "Electronic check", "Mailed check",
-        "Bank transfer (automatic)", "Credit card (automatic)"
+        "Electronic check",
+        "Mailed check",
+        "Bank transfer (automatic)",
+        "Credit card (automatic)",
     ]
 
     @field_validator("TotalCharges")
@@ -38,7 +41,9 @@ class CustomerInput(BaseModel):
         monthly = info.data.get("MonthlyCharges", 0)
         tenure = info.data.get("tenure", 0)
         if tenure > 0 and v < monthly:
-            raise ValueError("TotalCharges cannot be less than MonthlyCharges when tenure > 0")
+            raise ValueError(
+                "TotalCharges cannot be less than MonthlyCharges when tenure > 0"
+            )
         return v
 
 
@@ -58,10 +63,15 @@ class PredictionOutput(BaseModel):
     model_version: str
     prediction_id: str
     timestamp: datetime
+    healed_actions: List[str] = Field(default_factory=list)
 
 
 class BatchInput(BaseModel):
     customers: List[CustomerInput] = Field(..., max_length=5000)
+
+
+class LaxBatchInput(BaseModel):
+    customers: List[dict] = Field(..., max_length=5000)
 
 
 class BatchOutput(BaseModel):
