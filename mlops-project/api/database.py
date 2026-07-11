@@ -1,7 +1,8 @@
 """
 SQLAlchemy + SQLite setup. Lightweight — no external DB needed.
 """
-from sqlalchemy import create_engine, Column, String, Float, Integer, DateTime, text
+
+from sqlalchemy import create_engine, Column, String, Float, Integer, DateTime
 from sqlalchemy.orm import declarative_base, sessionmaker
 from datetime import datetime, timedelta
 import os
@@ -21,6 +22,16 @@ class Prediction(Base):
     risk_tier = Column(String, nullable=False)
     prediction = Column(Integer, nullable=False)
     model_ver = Column(String, nullable=False)
+    features_json = Column(String, nullable=True)
+    healed_actions = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class SelfHealingLog(Base):
+    __tablename__ = "self_healing_logs"
+    id = Column(String, primary_key=True)
+    event_type = Column(String, nullable=False)  # "data_quality" or "retraining"
+    description = Column(String, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -48,12 +59,29 @@ def get_db():
 
 # ── Query helpers ──────────────────────────────────────────
 
-def log_prediction(db, prediction_id, customer_id, input_hash,
-                   probability, risk_tier, prediction, model_ver):
+
+def log_prediction(
+    db,
+    prediction_id,
+    customer_id,
+    input_hash,
+    probability,
+    risk_tier,
+    prediction,
+    model_ver,
+    features_json=None,
+    healed_actions=None,
+):
     record = Prediction(
-        id=prediction_id, customer_id=customer_id, input_hash=input_hash,
-        probability=probability, risk_tier=risk_tier, prediction=prediction,
-        model_ver=model_ver
+        id=prediction_id,
+        customer_id=customer_id,
+        input_hash=input_hash,
+        probability=probability,
+        risk_tier=risk_tier,
+        prediction=prediction,
+        model_ver=model_ver,
+        features_json=features_json,
+        healed_actions=healed_actions,
     )
     db.add(record)
     db.commit()
@@ -78,23 +106,44 @@ def risk_distribution(db) -> dict:
 
 def last_n_inputs(db, n: int = 500):
     """Return last N prediction records for drift monitoring."""
-    return (db.query(Prediction)
-              .order_by(Prediction.created_at.desc())
-              .limit(n)
-              .all())
+    return db.query(Prediction).order_by(Prediction.created_at.desc()).limit(n).all()
 
 
-def log_drift_report(db, report_id, report_path, drift_detected, drift_score, n_samples):
+def log_drift_report(
+    db, report_id, report_path, drift_detected, drift_score, n_samples
+):
     record = DriftReport(
-        id=report_id, report_path=report_path,
+        id=report_id,
+        report_path=report_path,
         drift_detected=int(drift_detected),
-        drift_score=drift_score, n_samples=n_samples
+        drift_score=drift_score,
+        n_samples=n_samples,
     )
     db.add(record)
     db.commit()
 
 
 def get_latest_drift(db):
-    return (db.query(DriftReport)
-              .order_by(DriftReport.created_at.desc())
-              .first())
+    return db.query(DriftReport).order_by(DriftReport.created_at.desc()).first()
+
+
+def log_self_healing_event(db, event_type: str, description: str):
+    import uuid
+
+    record = SelfHealingLog(
+        id=str(uuid.uuid4()),
+        event_type=event_type,
+        description=description,
+        created_at=datetime.utcnow(),
+    )
+    db.add(record)
+    db.commit()
+
+
+def get_self_healing_logs(db, limit: int = 100):
+    return (
+        db.query(SelfHealingLog)
+        .order_by(SelfHealingLog.created_at.desc())
+        .limit(limit)
+        .all()
+    )
