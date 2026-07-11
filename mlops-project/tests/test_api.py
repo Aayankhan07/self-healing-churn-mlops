@@ -1,5 +1,4 @@
 """API endpoint tests using FastAPI TestClient."""
-import pytest
 
 
 def test_health_check(test_client):
@@ -10,9 +9,7 @@ def test_health_check(test_client):
 
 def test_predict_valid_input(test_client, valid_customer):
     r = test_client.post(
-        "/predict",
-        json=valid_customer,
-        headers={"X-API-Key": "dev-key-change-in-prod"}
+        "/predict", json=valid_customer, headers={"X-API-Key": "dev-key-change-in-prod"}
     )
     assert r.status_code == 200
     body = r.json()
@@ -28,9 +25,7 @@ def test_predict_missing_api_key(test_client, valid_customer):
 
 def test_predict_invalid_api_key(test_client, valid_customer):
     r = test_client.post(
-        "/predict",
-        json=valid_customer,
-        headers={"X-API-Key": "wrong-key"}
+        "/predict", json=valid_customer, headers={"X-API-Key": "wrong-key"}
     )
     assert r.status_code == 403
 
@@ -38,19 +33,22 @@ def test_predict_invalid_api_key(test_client, valid_customer):
 def test_predict_invalid_tenure(test_client, valid_customer):
     invalid = {**valid_customer, "tenure": -1}
     r = test_client.post(
-        "/predict", json=invalid,
-        headers={"X-API-Key": "dev-key-change-in-prod"}
+        "/predict", json=invalid, headers={"X-API-Key": "dev-key-change-in-prod"}
     )
-    assert r.status_code == 422
+    assert r.status_code == 200
+    assert "Clamped negative tenure to 0" in r.json()["healed_actions"]
 
 
 def test_predict_invalid_contract(test_client, valid_customer):
     invalid = {**valid_customer, "Contract": "Weekly"}
     r = test_client.post(
-        "/predict", json=invalid,
-        headers={"X-API-Key": "dev-key-change-in-prod"}
+        "/predict", json=invalid, headers={"X-API-Key": "dev-key-change-in-prod"}
     )
-    assert r.status_code == 422
+    assert r.status_code == 200
+    assert (
+        "Imputed unrecognized Contract ('Weekly') to default 'Month-to-month'"
+        in r.json()["healed_actions"]
+    )
 
 
 def test_drift_status_endpoint(test_client):
