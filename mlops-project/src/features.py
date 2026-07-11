@@ -2,6 +2,7 @@
 Feature engineering and preprocessing pipeline.
 The same preprocessor is used in training AND inference — no leakage.
 """
+
 import pandas as pd
 import numpy as np
 from sklearn.pipeline import Pipeline
@@ -13,20 +14,44 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-NUMERIC_FEATURES = ["tenure", "MonthlyCharges", "TotalCharges",
-                    "services_count", "charges_per_month_ratio"]
+NUMERIC_FEATURES = [
+    "tenure",
+    "MonthlyCharges",
+    "TotalCharges",
+    "services_count",
+    "charges_per_month_ratio",
+]
 
 CATEGORICAL_FEATURES = [
-    "gender", "Partner", "Dependents", "PhoneService", "MultipleLines",
-    "InternetService", "OnlineSecurity", "OnlineBackup", "DeviceProtection",
-    "TechSupport", "StreamingTV", "StreamingMovies", "Contract",
-    "PaperlessBilling", "PaymentMethod", "SeniorCitizen", "tenure_group"
+    "gender",
+    "Partner",
+    "Dependents",
+    "PhoneService",
+    "MultipleLines",
+    "InternetService",
+    "OnlineSecurity",
+    "OnlineBackup",
+    "DeviceProtection",
+    "TechSupport",
+    "StreamingTV",
+    "StreamingMovies",
+    "Contract",
+    "PaperlessBilling",
+    "PaymentMethod",
+    "SeniorCitizen",
+    "tenure_group",
 ]
 
 SERVICE_COLS = [
-    "PhoneService", "MultipleLines", "InternetService", "OnlineSecurity",
-    "OnlineBackup", "DeviceProtection", "TechSupport", "StreamingTV",
-    "StreamingMovies"
+    "PhoneService",
+    "MultipleLines",
+    "InternetService",
+    "OnlineSecurity",
+    "OnlineBackup",
+    "DeviceProtection",
+    "TechSupport",
+    "StreamingTV",
+    "StreamingMovies",
 ]
 
 
@@ -38,7 +63,7 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
         df["tenure"],
         bins=[0, 12, 24, 48, 72, np.inf],
         labels=["0-1yr", "1-2yr", "2-4yr", "4-6yr", "6+yr"],
-        right=True
+        right=True,
     ).astype(str)
     # Count active services
     df["services_count"] = (
@@ -53,18 +78,24 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
 
 def build_preprocessor() -> ColumnTransformer:
     """Build sklearn ColumnTransformer. Call .fit() on training data only."""
-    numeric_pipeline = Pipeline([
-        ("imputer", SimpleImputer(strategy="median")),
-        ("scaler", StandardScaler()),
-    ])
-    categorical_pipeline = Pipeline([
-        ("imputer", SimpleImputer(strategy="most_frequent")),
-        ("encoder", OneHotEncoder(handle_unknown="ignore", sparse_output=False)),
-    ])
-    return ColumnTransformer([
-        ("numeric", numeric_pipeline, NUMERIC_FEATURES),
-        ("categorical", categorical_pipeline, CATEGORICAL_FEATURES),
-    ])
+    numeric_pipeline = Pipeline(
+        [
+            ("imputer", SimpleImputer(strategy="median")),
+            ("scaler", StandardScaler()),
+        ]
+    )
+    categorical_pipeline = Pipeline(
+        [
+            ("imputer", SimpleImputer(strategy="most_frequent")),
+            ("encoder", OneHotEncoder(handle_unknown="ignore", sparse_output=False)),
+        ]
+    )
+    return ColumnTransformer(
+        [
+            ("numeric", numeric_pipeline, NUMERIC_FEATURES),
+            ("categorical", categorical_pipeline, CATEGORICAL_FEATURES),
+        ]
+    )
 
 
 def save_preprocessor(preprocessor: ColumnTransformer, path: str) -> None:
