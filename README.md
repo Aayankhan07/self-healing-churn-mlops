@@ -1,162 +1,99 @@
-#  ChurnGuard: Self-Healing MLOps Customer Churn Platform
+# ChurnGuard: Multi-Domain Self-Healing MLOps Platform
 
-ChurnGuard is a business-facing MLOps platform that predicts which customers are at risk of churning, explains why using SHAP feature importances, monitors input data drift via Evidently AI, and dynamically heals data anomalies in production to prevent pipeline crashes. If significant data drift is detected, ChurnGuard triggers an automated self-healing retraining loop with Optuna tuning and XGBoost, atomically hot-reloading the newly trained model in memory.
-
----
-
-## ️ Architecture Overview
-
-The system is designed as a modular, decoupled platform where the FastAPI backend handles scoring, logging, monitoring, and self-healing, while the Streamlit dashboard provides a premium executive view.
-
-```mermaid
-graph TD
-    Client[Client / Streamlit Dashboard] -->|1. API Requests| API[FastAPI Inference Engine]
-    API -->|2. Ingestion Self-Healing| SH[Self-Healing Rules]
-    SH -->|Normalize, Clamp, Impute, Fuzzy Match| API
-    API -->|3. Predict & SHAP| Model[XGBoost Model & SHAP Explainer]
-    API -->|4. Log Predictions & Audits| DB[(SQLite DB: churnguard.db)]
-    API -->|5. Trigger Drift Check| Drift[Evidently AI Drift Check]
-    
-    Drift -->|If Drift > Threshold| Retrain[Asynchronous Retraining Pipeline]
-    Retrain -->|Load Raw & Production Data| Prep[Retraining Data Prep]
-    Prep -->|Optuna Hyperparameter Tuning| XGB[XGBoost Training]
-    XGB -->|Log Metrics & Register| MLflow[(MLflow Registry: mlflow.db)]
-    MLflow -->|6. Atomic Hot-Reload| API
-```
+ChurnGuard is an enterprise MLOps platform designed to predict customer and student churn across multiple industries (Telecom, K-12 Schools, E-Commerce, Fitness, and Custom domains). It features domain-isolated model registries, rule-based data self-healing, automated retention playbooks, parametric survival analysis, Champion vs. Challenger shadow deployments, and Prometheus monitoring.
 
 ---
 
-##  Core Features
+## Key Platform Capabilities
 
-1. **Self-Healing Data Pipeline**:
-   * **Ingestion-Level Healing**: Implements rule-based correction (clamping negative tenures, imputing missing charges using medians, norming categorical variables) and dynamic typo resolution using string similarity metrics (`difflib.get_close_matches`) on the API Gateway.
-   * **Retraining-Level Healing**: Automatically cleans production data and logs all correction actions as data quality events prior to appending records to the training set.
-2. **Asynchronous Retraining & Drift Alerts**:
-   * Measures dataset drift continuously. If the drift score exceeds the threshold, it triggers an asynchronous retraining thread.
-   * Performs hyperparameter optimization with Optuna and registers the best model in MLflow.
-   * Atomically reloads the new model in-memory with thread-safe locks (`threading.Lock()`).
-3. **Interactive Dashboard**:
-   * Sleek, high-fidelity dark-mode user interface.
-   * Executive KPIs (total customers scored, risk segments, churn distribution).
-   * Searchable customer table with SHAP waterfall explanations.
-   * Live model metrics (F1, AUC, PR curve) and downloadable HTML drift reports.
-   * Self-healing monitoring console showing real-time data corrections and manual retraining triggers.
+1. **Domain-Isolated Multi-Model Registry**:
+   * Operates distinct XGBoost pipelines and preprocessors for each industry domain (`models/telecom/`, `models/school/`, `models/ecommerce/`, `models/fitness/`, `models/custom_*`).
+   * Evaluates Evidently AI data drift against isolated per-domain baselines (`data/baselines/{domain_id}_baseline.csv`).
+   * Provides dynamic custom domain provisioning via `POST /domain/bootstrap`.
+
+2. **Automated Retention Action Playbooks (`src/playbooks.py`)**:
+   * Translates top SHAP drivers into domain-tailored intervention playbooks.
+   * **School Student Churn**: *Schedule mandatory Academic Counselor check-in and notify parents via portal.*
+   * **Fitness Member Churn**: *Send automated SMS offering a complimentary 1-on-1 Personal Trainer session.*
+   * **Telecom Customer Churn**: *Trigger proactive 10% loyalty discount on 1-year contract pitch.*
+
+3. **Survival Analysis & Time-to-Churn Estimation (`src/survival.py`)**:
+   * Implements parametric Weibull hazard rate modeling to estimate exact time-to-churn days and survival timelines (30, 60, 90, 180 days).
+
+4. **Champion vs. Challenger Shadow Deployments**:
+   * Retrained models are registered as `challenger` and run in shadow inference alongside `champion`.
+   * Tracks divergence metrics via `GET /model/shadow-status` and supports data-driven promotion via `POST /model/promote`.
+
+5. **Enterprise Monitoring & Webhook Alerts**:
+   * Exposes Prometheus text-formatted metrics at `GET /metrics/prometheus`.
+   * Dispatches instant Slack/Webhook alerts (`src/notifications.py`) for drift breaches ($\ge 0.20$), database self-healing events, and challenger promotions.
 
 ---
 
-##  Repository Structure
+## Repository Structure
 
 ```text
-├── .github/                 # GitHub workflows
-├── alembic/                 # Database migration configurations
-├── alembic.ini              # Alembic environment setup
 ├── api/                     # FastAPI backend application
-│   ├── database.py          # SQLAlchemy models and SQLite connection helpers
-│   ├── drift.py             # Evidently AI report generators
-│   ├── main.py              # Application entrypoint & self-healing ingestion logic
-│   ├── predict.py           # Single & batch prediction runners
+│   ├── database.py          # SQLAlchemy models with domain_id schema tagging
+│   ├── main.py              # Application entrypoint & domain routing
+│   ├── metrics_prometheus.py# Prometheus exposition metrics endpoint
+│   ├── predict.py           # Single & batch prediction runners with playbooks
 │   └── schemas.py           # Pydantic data schemas
 ├── dashboard/               # Streamlit application
-│   └── app.py               # Dark mode executive layout & visualization code
-├── data/                    # Local storage for raw and processed datasets
-├── dvc.yaml                 # DVC data preprocessing and training pipeline
+│   └── app.py               # Dark-mode executive dashboard & domain switcher
+├── data/                    # Storage for raw datasets and domain baselines
+├── dvc.yaml                 # DVC pipeline stages
 ├── metrics/                 # Outputs of evaluation stages (JSON)
 ├── mlflow.db                # SQLite database for MLflow runs
-├── models/                  # Joblib files for models and preprocessors
-├── params.yaml              # Hyperparameter and monitoring configuration thresholds
-├── reports/                 # Exported HTML reports for data drift analysis
-├── src/                     # Raw Python pipelines
-│   ├── data_prep.py         # Split and load training splits
-│   ├── evaluate.py          # Model evaluation and SHAP calculations
-│   ├── features.py          # Feature engineering and encoders
-│   └── train.py             # XGBoost/Optuna model training script
-└── tests/                   # Pytest testing suite
+├── models/                  # Domain-isolated model directories
+│   ├── ecommerce/
+│   ├── fitness/
+│   ├── school/
+│   └── telecom/
+├── params.yaml              # Configuration thresholds
+├── scripts/                 # Utility scripts (e.g. train_all_domains.py)
+├── src/                     # Core Python modules
+│   ├── domain_registry.py   # Domain artifact & baseline manager
+│   ├── evaluate.py          # SHAP explanations & deduplicated driver extraction
+│   ├── features.py          # Pipeline preprocessor builder
+│   ├── monitor.py           # Evidently AI drift detector
+│   ├── notifications.py     # Slack webhook notification dispatcher
+│   ├── playbooks.py         # Domain retention playbook engine
+│   ├── survival.py          # Parametric survival curve calculator
+│   └── train.py             # Optuna tuning & MLflow registration pipeline
+└── tests/                   # Pytest testing suite (20/20 passing)
 ```
 
 ---
 
-##  Quickstart Guide
+## Quickstart Guide
 
-### Option 1: Docker Compose (Recommended)
-
-Start the entire stack (FastAPI Backend, Streamlit Dashboard, and MLflow Tracking Server) with a single command:
-
-```powershell
-docker-compose up --build
-```
-
-Access the services at:
-* **Streamlit Dashboard**: `http://localhost:8501`
-* **FastAPI Backend (Swagger Docs)**: `http://localhost:8000/docs`
-* **MLflow Tracking UI**: `http://localhost:5000`
-
----
-
-### Option 2: Local Development Setup
-
-#### 1. Setup Virtual Environment & Install Dependencies
-Ensure you are using **Python 3.10+** (tested and optimized for Python 3.12 compatibility):
+### 1. Setup Virtual Environment & Install Dependencies
+Ensure you are using **Python 3.10+** (tested and optimized for Python 3.12):
 
 ```powershell
-# Create venv
-python -m venv .venv
-.venv\Scripts\activate
-
-# Install dependencies
+C:\Users\Aayan\AppData\Local\Programs\Python\Python312\python.exe -m venv .venv
+.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 ```
 
-#### 2. Run the FastAPI Application
+### 2. Run Automated Testing Suite
 ```powershell
-# Run backend on port 8000
-uvicorn api.main:app --reload --host 127.0.0.1 --port 8000
+C:\Users\Aayan\AppData\Local\Programs\Python\Python312\python.exe -m pytest -v
 ```
 
-#### 3. Run the Streamlit Dashboard
-Open a new shell, activate the environment, and run:
+### 3. Launch Services
+
+#### Start FastAPI Backend Engine:
 ```powershell
-# Run frontend dashboard
-streamlit run dashboard/app.py
+uvicorn api.main:app --host 0.0.0.0 --port 8000
 ```
 
----
-
-##  API Documentation
-
-| Method | Endpoint | Description | Auth Required |
-|:---|:---|:---|:---|
-| `GET` | `/health` | Check backend availability & model registry status | No |
-| `GET` | `/metrics` | Fetch live model metrics (F1/AUC-ROC) from MLflow or local files | No |
-| `POST` | `/predict` | Predict churn for a single customer (applies self-healing) | Yes (`X-API-Key`) |
-| `POST` | `/predict/batch` | Bulk predict churn for a batch of customers | Yes (`X-API-Key`) |
-| `POST` | `/upload` | Accept CSV file, score all entries, return output CSV | Yes (`X-API-Key`) |
-| `GET` | `/drift/status` | Fetch latest Evidently AI dataset drift summary | No |
-| `GET` | `/drift/report` | Download the complete HTML report of data drift | No |
-| `GET` | `/self-healing/logs` | Fetch audit logs of ingestion and retraining fixes | No |
-| `POST` | `/self-healing/trigger-retrain` | Manually run the training pipeline asynchronously | No |
-
----
-
-##  Data Quality & Self-Healing Logic
-
-To prevent pipeline breaks from bad data inputs, ChurnGuard runs the incoming dictionary through `heal_customer_data` before validation:
-
-* **Numeric Fields**:
-  * Clamps negative `tenure` values to `0`.
-  * Imputes missing `MonthlyCharges` with the median (`70.35`).
-  * Recomputes `TotalCharges` dynamically as `MonthlyCharges * tenure` when values are missing or violate constraints.
-* **Categorical Fields**:
-  * Normalizes variations of `SeniorCitizen` (e.g. `"Yes"`, `"y"`, `"true"`, `1.0`) to binary integer formats (`0` or `1`).
-  * Uses fuzzy string matching to correct typos in user choices (e.g., mapping `"Electrnic check"` to `"Electronic check"`).
-
-All occurrences are logged to the database's `self_healing_events` table and displayed on the dashboard console.
-
----
-
-##  Testing & Verification
-
-Run the test suite containing unit tests for pipeline preprocessing, integration tests for API endpoints, and validation of database-level self-healing during retraining:
-
+#### Start Streamlit Dashboard:
 ```powershell
-pytest tests/
+streamlit run dashboard/app.py --server.port 8501
 ```
+
+- **Dashboard UI**: `http://localhost:8501`
+- **FastAPI Swagger Docs**: `http://localhost:8000/docs`
+- **Prometheus Metrics**: `http://localhost:8000/metrics/prometheus`
