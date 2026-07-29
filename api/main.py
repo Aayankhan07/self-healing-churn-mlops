@@ -27,7 +27,7 @@ import json  # noqa: E402
 from api.schemas import CustomerInput, PredictionOutput, BatchOutput, HealthResponse, DriftStatusResponse, LaxBatchInput  # fmt: skip # noqa: E402
 from api.predict import run_single_prediction  # noqa: E402
 from api.database import init_db, get_db, last_n_inputs, get_latest_drift, log_drift_report, log_self_healing_event, get_self_healing_logs, SelfHealingLog  # fmt: skip # noqa: E402
-from api.drift import generate_drift_report  # noqa: E402
+from src.monitor import generate_drift_report  # noqa: E402
 
 START_TIME = time.time()
 
@@ -41,11 +41,15 @@ if not API_KEY:
     else:
         API_KEY = "dev-key-change-in-prod"
 
+from api.metrics_prometheus import router as prometheus_router
+
 app = FastAPI(
     title="ChurnGuard API",
-    description="Customer churn prediction — predict, explain, monitor.",
+    description="Production-grade, self-healing MLOps churn prediction microservice",
     version="1.0.0",
 )
+
+app.include_router(prometheus_router)
 
 
 def verify_api_key(x_api_key: str = Header(...)):
@@ -782,3 +786,35 @@ def bootstrap_domain_endpoint(payload: dict):
         }
 
     return {"status": "success", "domain_key": domain_key, "message": f"Domain '{domain_name}' bootstrapped and isolated."}
+
+
+@app.get("/model/shadow-status")
+def shadow_status(domain: str = "telecom", db: Session = Depends(get_db)):
+    from src.domain_registry import sanitize_domain_id
+    domain_key = sanitize_domain_id(domain)
+    from api.database import get_shadow_stats
+    return get_shadow_stats(db, domain_id=domain_key)
+
+
+@app.post("/model/promote")
+def promote_challenger(domain: str = "telecom", db: Session = Depends(get_db)):
+    from src.domain_registry import sanitize_domain_id
+    domain_key = sanitize_domain_id(domain)
+    domain_container = getattr(app.state, "model_registry", {}).get(domain_key)
+    if not domain_container or "challenger" not in domain_container:
+        return {"status": "info", "message": f"No challenger model active for domain '{domain_key}'. Current champion is active."}
+
+    with app.state.model_lock:
+        domain_container["champion"] = domain_container["challenger"]
+        domain_container["model"] = domain_container["challenger"]["model"]
+        domain_container["preprocessor"] = domain_container["challenger"]["preprocessor"]
+        domain_container["version"] = domain_container["challenger"]["version"]
+        del domain_container["challenger"]
+
+    from api.database import log_self_healing_event
+    log_self_healing_event(db, "retraining", f"Promoted Challenger model to Champion for domain '{domain_key}'.", domain_id=domain_key)
+
+    from src.notifications import send_slack_alert
+    send_slack_alert("promotion", f"Model Promoted for domain {domain_key}", f"Challenger model version {domain_container['version']} promoted to Champion.", domain_id=domain_key)
+
+    return {"status": "success", "message": f"Challenger promoted to Champion for domain '{domain_key}'."}
