@@ -23,6 +23,7 @@ import tempfile  # noqa: E402
 import yaml  # noqa: E402
 import random  # noqa: E402
 import json  # noqa: E402
+import hashlib  # noqa: E402
 
 from api.schemas import CustomerInput, PredictionOutput, BatchOutput, HealthResponse, DriftStatusResponse, LaxBatchInput  # fmt: skip # noqa: E402
 from api.predict import run_single_prediction  # noqa: E402
@@ -41,6 +42,55 @@ if not API_KEY:
     else:
         API_KEY = "dev-key-change-in-prod"
 
+def _hash_key(key: str) -> str:
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()
+
+
+import secrets  # noqa: E402
+
+API_KEY_ANALYST = os.getenv("API_KEY_ANALYST", "analyst-key")
+API_KEY_ENGINEER = os.getenv("API_KEY_ENGINEER", "engineer-key")
+API_KEY_ADMIN = os.getenv("API_KEY_ADMIN", API_KEY)
+
+
+def generate_high_entropy_key(prefix: str = "cg") -> str:
+    """Utility generating 256-bit cryptographically secure high-entropy API token."""
+    return f"{prefix}_{secrets.token_urlsafe(32)}"
+
+
+# Hashed Role-Based Access Control (RBAC) Scope Mappings
+HASHED_API_KEY_SCOPES = {
+    _hash_key(API_KEY_ANALYST): ["read:predict"],
+    _hash_key(API_KEY_ENGINEER): ["read:predict", "write:retrain"],
+    _hash_key(API_KEY_ADMIN): ["read:predict", "write:retrain", "admin:bootstrap", "admin:promote"],
+}
+
+
+def verify_scope(required_scope: str):
+    """Dependency factory verifying SHA-256 hashed API key privileges against required scope."""
+    def scope_checker(x_api_key: str = Header(...)):
+        hashed_input = _hash_key(x_api_key)
+        scopes = HASHED_API_KEY_SCOPES.get(hashed_input)
+        if not scopes:
+            if x_api_key == API_KEY:
+                scopes = ["read:predict", "write:retrain", "admin:bootstrap", "admin:promote"]
+            else:
+                raise HTTPException(status_code=403, detail="Invalid API key")
+        
+        if required_scope not in scopes:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Forbidden: Insufficient privileges. Required scope '{required_scope}'."
+            )
+        return x_api_key
+    return scope_checker
+
+
+def verify_api_key(x_api_key: str = Header(...)):
+    """Backwards-compatible dependency for read:predict scope."""
+    return verify_scope("read:predict")(x_api_key)
+
+
 from api.metrics_prometheus import router as prometheus_router
 
 app = FastAPI(
@@ -50,11 +100,6 @@ app = FastAPI(
 )
 
 app.include_router(prometheus_router)
-
-
-def verify_api_key(x_api_key: str = Header(...)):
-    if x_api_key != API_KEY:
-        raise HTTPException(status_code=403, detail="Invalid API key")
 
 
 @app.on_event("startup")
@@ -492,8 +537,19 @@ def drift_report(domain: str = "telecom", db: Session = Depends(get_db)):
     from src.domain_registry import sanitize_domain_id
     domain_key = sanitize_domain_id(domain)
     latest = get_latest_drift(db, domain_id=domain_key)
-    if not latest:
-        raise HTTPException(status_code=404, detail="No drift report available yet")
+    if not latest or not os.path.exists(latest.report_path):
+        from src.monitor import generate_drift_report
+        res = generate_drift_report(None, domain_id=domain_key)
+        return FileResponse(res["report_path"], media_type="text/html")
+
+    with open(latest.report_path, "r", encoding="utf-8", errors="ignore") as f:
+        content = f.read()
+
+    if "Mock fallback" in content or "<html><body><h1>" in content:
+        from src.monitor import generate_drift_report
+        res = generate_drift_report(None, domain_id=domain_key)
+        return FileResponse(res["report_path"], media_type="text/html")
+
     return FileResponse(latest.report_path, media_type="text/html")
 
 
@@ -638,17 +694,21 @@ def run_self_healing_retraining(app_ref, domain_id: str = "telecom"):
                     label = raw_labels[cust_id]
                     true_label_count += 1
                 else:
-                    if r.probability >= 0.85:
-                        label = 1
-                        weight = 0.5
-                        pseudo_label_count += 1
-                    elif r.probability <= 0.15:
-                        label = 0
-                        weight = 0.5
-                        pseudo_label_count += 1
+                    # Enforce pseudo-label ratio cap (max 30% pseudo-labels) and weight decay (0.25)
+                    MAX_PSEUDO_LABEL_RATIO = 0.30
+                    current_pseudo_ratio = pseudo_label_count / max(1, (true_label_count + pseudo_label_count))
+                    if current_pseudo_ratio < MAX_PSEUDO_LABEL_RATIO:
+                        if r.probability >= 0.85:
+                            label = 1
+                            weight = 0.25
+                            pseudo_label_count += 1
+                        elif r.probability <= 0.15:
+                            label = 0
+                            weight = 0.25
+                            pseudo_label_count += 1
 
                 if label is not None:
-                    if weight == 0.5:
+                    if weight == 0.25:
                         if random.random() > 0.5:
                             continue
                     features["Churn"] = label
@@ -689,7 +749,7 @@ def run_self_healing_retraining(app_ref, domain_id: str = "telecom"):
         log_self_healing_event(
             db,
             "retraining",
-            f"Starting retraining pipeline for domain '{domain_id}'. Combined dataset has {len(combined_train_df)} samples.",
+            f"Starting retraining pipeline for domain '{domain_id}'. Combined dataset has {len(combined_train_df)} samples ({true_label_count} true labels, {pseudo_label_count} pseudo-labels).",
         )
 
         run_training_pipeline(params)
@@ -697,26 +757,30 @@ def run_self_healing_retraining(app_ref, domain_id: str = "telecom"):
         if os.path.exists(combined_path):
             os.remove(combined_path)
 
-        # Atomic Hot-Reloading for target domain
+        # Register retrained model as Challenger (Champion remains active until promoted)
         new_model = load_domain_model(domain_id)
         new_preprocessor = load_domain_preprocessor(domain_id)
 
         with app_ref.state.model_lock:
-            app_ref.state.model_registry[domain_id] = {
+            domain_container = app_ref.state.model_registry.setdefault(domain_id, {})
+            domain_container["challenger"] = {
                 "model": new_model,
                 "preprocessor": new_preprocessor,
-                "version": f"{domain_id}-retrained",
+                "version": f"{domain_id}-challenger-v2",
             }
-            if domain_id == "telecom":
-                app_ref.state.model_container = app_ref.state.model_registry["telecom"]
-                app_ref.state.model = new_model
-                app_ref.state.preprocessor = new_preprocessor
-                app_ref.state.model_version = "telecom-retrained"
 
         log_self_healing_event(
             db,
             "retraining",
-            f"Auto-retraining completed for domain '{domain_id}'. Domain model reloaded atomically.",
+            f"Auto-retraining completed for domain '{domain_id}'. Retrained model registered as Challenger in shadow evaluation mode.",
+            domain_id=domain_id,
+        )
+        from src.notifications import send_slack_alert
+        send_slack_alert(
+            "retraining",
+            f"Challenger Model Registered for domain {domain_id}",
+            f"Auto-retraining completed. Challenger version registered for shadow deployment evaluation.",
+            domain_id=domain_id,
         )
     except Exception as e:
         log_self_healing_event(db, "retraining", f"Auto-retraining failed: {str(e)}")
@@ -748,7 +812,7 @@ def get_sh_logs(domain: str = "telecom", limit: int = 100, db: Session = Depends
     ]
 
 
-@app.post("/self-healing/trigger-retrain")
+@app.post("/self-healing/trigger-retrain", dependencies=[Depends(verify_scope("write:retrain"))])
 def trigger_retrain(domain: str = "telecom", db: Session = Depends(get_db)):
     from src.domain_registry import sanitize_domain_id
     domain_key = sanitize_domain_id(domain)
@@ -766,7 +830,7 @@ def trigger_retrain(domain: str = "telecom", db: Session = Depends(get_db)):
     return {"status": "started", "message": f"Asynchronous retraining triggered for domain '{domain_key}'."}
 
 
-@app.post("/domain/bootstrap")
+@app.post("/domain/bootstrap", dependencies=[Depends(verify_scope("admin:bootstrap"))])
 def bootstrap_domain_endpoint(payload: dict):
     domain_name = payload.get("domain_name")
     if not domain_name:
@@ -796,7 +860,7 @@ def shadow_status(domain: str = "telecom", db: Session = Depends(get_db)):
     return get_shadow_stats(db, domain_id=domain_key)
 
 
-@app.post("/model/promote")
+@app.post("/model/promote", dependencies=[Depends(verify_scope("admin:promote"))])
 def promote_challenger(domain: str = "telecom", db: Session = Depends(get_db)):
     from src.domain_registry import sanitize_domain_id
     domain_key = sanitize_domain_id(domain)
@@ -809,6 +873,19 @@ def promote_challenger(domain: str = "telecom", db: Session = Depends(get_db)):
         domain_container["model"] = domain_container["challenger"]["model"]
         domain_container["preprocessor"] = domain_container["challenger"]["preprocessor"]
         domain_container["version"] = domain_container["challenger"]["version"]
+
+        # Synchronize ONNX runtime engine upon model promotion
+        try:
+            from src.onnx_exporter import ONNXInferenceEngine
+            from src.domain_registry import get_domain_model_dir
+            onnx_path = str(get_domain_model_dir(domain_key) / "model.onnx")
+            if "onnx_engine" in domain_container["challenger"]:
+                domain_container["onnx_engine"] = domain_container["challenger"]["onnx_engine"]
+            elif Path(onnx_path).exists():
+                domain_container["onnx_engine"] = ONNXInferenceEngine(onnx_path)
+        except Exception:
+            pass
+
         del domain_container["challenger"]
 
     from api.database import log_self_healing_event
