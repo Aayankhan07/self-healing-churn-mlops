@@ -1,0 +1,39 @@
+name: CI/CD Challenger Regression & Fairness Evaluation Gate
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  evaluate-gate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Pytest Suite
+        run: |
+          pytest -v
+
+      - name: Evaluate Challenger Model Regression Gate (Telecom Domain)
+        run: |
+          python scripts/evaluate_challenger_gate.py --domain telecom
+
+      - name: Evaluate Challenger Model Regression Gate (School Domain)
+        run: |
+          python scripts/evaluate_challenger_gate.py --domain school
