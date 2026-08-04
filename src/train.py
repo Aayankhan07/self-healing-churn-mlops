@@ -102,8 +102,10 @@ def train(params: dict):
         )
         final_pipeline.fit(X_train, y_train)
 
-        metrics = compute_metrics(final_pipeline, X_val, y_val)
-        mlflow.log_metrics(metrics)
+        metrics = compute_metrics(final_pipeline, X_val, y_val, X_val_raw)
+        # Separate float metrics for MLflow logging
+        mlflow_metrics = {k: v for k, v in metrics.items() if isinstance(v, (int, float))}
+        mlflow.log_metrics(mlflow_metrics)
         logger.info(f"Val metrics: {metrics}")
 
         # Save preprocessor separately for inference (needed for SHAP)
@@ -129,11 +131,14 @@ def train(params: dict):
         model_uri = f"runs:/{mlflow.active_run().info.run_id}/model"
         mlflow.register_model(model_uri, f"churn_model_{domain_id}")
 
-        # Save metrics for DVC
+        # Save metrics for DVC and domain registry
         Path("metrics").mkdir(exist_ok=True)
         import json
 
         with open("metrics/eval_metrics.json", "w") as f:
+            json.dump(metrics, f, indent=2)
+
+        with open(out_dir / "eval_metrics.json", "w") as f:
             json.dump(metrics, f, indent=2)
 
     logger.info(f"Training complete for domain '{domain_id}'. Model registered.")
