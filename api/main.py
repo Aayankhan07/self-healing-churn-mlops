@@ -10,11 +10,12 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 import time  # noqa: E402
 import os  # noqa: E402
+import logging  # noqa: E402
 import mlflow.sklearn  # noqa: E402
-import joblib  # noqa: E402
 import pandas as pd  # noqa: E402
 import threading  # noqa: E402
 import difflib  # noqa: E402
+from contextlib import asynccontextmanager  # noqa: E402
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Header  # fmt: skip # noqa: E402
 from fastapi.responses import FileResponse  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
@@ -25,32 +26,61 @@ import random  # noqa: E402
 import json  # noqa: E402
 import hashlib  # noqa: E402
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 from api.schemas import CustomerInput, PredictionOutput, BatchOutput, HealthResponse, DriftStatusResponse, LaxBatchInput  # fmt: skip # noqa: E402
 from api.predict import run_single_prediction  # noqa: E402
-from api.database import init_db, get_db, last_n_inputs, get_latest_drift, log_drift_report, log_self_healing_event, get_self_healing_logs, SelfHealingLog  # fmt: skip # noqa: E402
+from api.database import init_db, get_db, last_n_inputs, get_latest_drift, log_drift_report, log_self_healing_event, get_self_healing_logs  # fmt: skip # noqa: E402
 from src.monitor import generate_drift_report  # noqa: E402
 
 START_TIME = time.time()
 
+import secrets  # noqa: E402
+
 ENVIRONMENT = os.getenv("ENV", "development").lower()
-API_KEY = os.getenv("API_KEY")
-if not API_KEY:
-    if ENVIRONMENT == "production":
+IS_PRODUCTION = ENVIRONMENT == "production"
+
+ANALYST_SCOPES = ["read:predict"]
+ENGINEER_SCOPES = ["read:predict", "write:retrain"]
+ADMIN_SCOPES = ["read:predict", "write:retrain", "admin:bootstrap", "admin:promote"]
+
+# Every role key must be supplied explicitly in production. Falling back to a
+# shared or well-known default would silently grant admin scope to whoever
+# holds the read key.
+_DEV_DEFAULTS = {
+    "API_KEY": "dev-key-change-in-prod",
+    "API_KEY_ANALYST": "analyst-key",
+    "API_KEY_ENGINEER": "engineer-key",
+}
+
+
+def _require_key(name: str) -> str:
+    value = os.getenv(name)
+    if value:
+        return value
+    if IS_PRODUCTION:
         raise ValueError(
-            "API_KEY environment variable must be set in production environment!"
+            f"{name} environment variable must be set in production environment!"
         )
-    else:
-        API_KEY = "dev-key-change-in-prod"
+    return _DEV_DEFAULTS[name]
+
+
+API_KEY = _require_key("API_KEY")
+API_KEY_ANALYST = _require_key("API_KEY_ANALYST")
+API_KEY_ENGINEER = _require_key("API_KEY_ENGINEER")
+
+API_KEY_ADMIN = os.getenv("API_KEY_ADMIN")
+if not API_KEY_ADMIN:
+    if IS_PRODUCTION:
+        raise ValueError(
+            "API_KEY_ADMIN environment variable must be set in production environment!"
+        )
+    API_KEY_ADMIN = API_KEY
+
 
 def _hash_key(key: str) -> str:
     return hashlib.sha256(key.encode("utf-8")).hexdigest()
-
-
-import secrets  # noqa: E402
-
-API_KEY_ANALYST = os.getenv("API_KEY_ANALYST", "analyst-key")
-API_KEY_ENGINEER = os.getenv("API_KEY_ENGINEER", "engineer-key")
-API_KEY_ADMIN = os.getenv("API_KEY_ADMIN", API_KEY)
 
 
 def generate_high_entropy_key(prefix: str = "cg") -> str:
@@ -60,29 +90,36 @@ def generate_high_entropy_key(prefix: str = "cg") -> str:
 
 # Hashed Role-Based Access Control (RBAC) Scope Mappings
 HASHED_API_KEY_SCOPES = {
-    _hash_key(API_KEY_ANALYST): ["read:predict"],
-    _hash_key(API_KEY_ENGINEER): ["read:predict", "write:retrain"],
-    _hash_key(API_KEY_ADMIN): ["read:predict", "write:retrain", "admin:bootstrap", "admin:promote"],
+    _hash_key(API_KEY_ANALYST): ANALYST_SCOPES,
+    _hash_key(API_KEY_ENGINEER): ENGINEER_SCOPES,
+    _hash_key(API_KEY_ADMIN): ADMIN_SCOPES,
 }
 
 
 def verify_scope(required_scope: str):
     """Dependency factory verifying SHA-256 hashed API key privileges against required scope."""
+
     def scope_checker(x_api_key: str = Header(...)):
         hashed_input = _hash_key(x_api_key)
         scopes = HASHED_API_KEY_SCOPES.get(hashed_input)
         if not scopes:
-            if x_api_key == API_KEY:
-                scopes = ["read:predict", "write:retrain", "admin:bootstrap", "admin:promote"]
+            # Legacy single-key fallback. Outside production only: granting the
+            # full admin scope to the generic API_KEY is exactly the escalation
+            # path we refuse to ship.
+            if not IS_PRODUCTION and secrets.compare_digest(
+                hashed_input, _hash_key(API_KEY)
+            ):
+                scopes = ADMIN_SCOPES
             else:
                 raise HTTPException(status_code=403, detail="Invalid API key")
-        
+
         if required_scope not in scopes:
             raise HTTPException(
                 status_code=403,
-                detail=f"Forbidden: Insufficient privileges. Required scope '{required_scope}'."
+                detail=f"Forbidden: Insufficient privileges. Required scope '{required_scope}'.",
             )
         return x_api_key
+
     return scope_checker
 
 
@@ -91,33 +128,27 @@ def verify_api_key(x_api_key: str = Header(...)):
     return verify_scope("read:predict")(x_api_key)
 
 
-from api.metrics_prometheus import router as prometheus_router
-
-app = FastAPI(
-    title="ChurnGuard API",
-    description="Production-grade, self-healing MLOps churn prediction microservice",
-    version="1.0.0",
-)
-
-app.include_router(prometheus_router)
+from api.metrics_prometheus import router as prometheus_router  # noqa: E402
 
 
-@app.on_event("startup")
-async def startup():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI", "sqlite:///mlflow.db"))
-    
+
     # Initialize thread lock and domain-isolated model registry
     app.state.model_lock = threading.Lock()
     app.state.model_registry = {}
 
-    from src.domain_registry import load_domain_model, load_domain_preprocessor, ensure_domain_initialized
+    from src.domain_registry import ensure_domain_initialized
+    import src.domain_registry as domain_registry
+
     default_domains = ["telecom", "school", "ecommerce", "fitness"]
 
     for d_id in default_domains:
         try:
             ensure_domain_initialized(d_id)
-            d_model = load_domain_model(d_id)
-            d_prep = load_domain_preprocessor(d_id)
+            d_model = domain_registry.load_domain_model(d_id)
+            d_prep = domain_registry.load_domain_preprocessor(d_id)
             app.state.model_registry[d_id] = {
                 "model": d_model,
                 "preprocessor": d_prep,
@@ -143,6 +174,18 @@ async def startup():
     app.state.drift_check_every = int(os.getenv("DRIFT_CHECK_EVERY_N", 100))
     app.state.retraining_status = "idle"
     init_db()
+
+    yield
+
+
+app = FastAPI(
+    title="ChurnGuard API",
+    description="Production-grade, self-healing MLOps churn prediction microservice",
+    version="1.0.0",
+    lifespan=lifespan,
+)
+
+app.include_router(prometheus_router)
 
 
 def heal_customer_data(raw_data: dict) -> tuple[dict, list[str]]:
@@ -290,10 +333,15 @@ def heal_customer_data(raw_data: dict) -> tuple[dict, list[str]]:
 @app.get("/health", response_model=HealthResponse)
 def health(domain: str = "telecom"):
     from src.domain_registry import sanitize_domain_id
+
     domain_key = sanitize_domain_id(domain)
     domain_model = getattr(app.state, "model_registry", {}).get(domain_key)
     is_loaded = domain_model is not None or getattr(app.state, "model_loaded", False)
-    version = domain_model.get("version", f"{domain_key}-v1") if domain_model else getattr(app.state, "model_version", "v1.0.0")
+    version = (
+        domain_model.get("version", f"{domain_key}-v1")
+        if domain_model
+        else getattr(app.state, "model_version", "v1.0.0")
+    )
     return HealthResponse(
         status="healthy" if is_loaded else "degraded",
         model_loaded=is_loaded,
@@ -305,6 +353,7 @@ def health(domain: str = "telecom"):
 @app.get("/metrics")
 def get_metrics(domain: str = "telecom", db: Session = Depends(get_db)):
     from src.domain_registry import sanitize_domain_id, get_domain_model_dir
+
     domain_key = sanitize_domain_id(domain)
     domain_metrics_path = get_domain_model_dir(domain_key) / "eval_metrics.json"
 
@@ -354,7 +403,11 @@ def get_metrics(domain: str = "telecom", db: Session = Depends(get_db)):
                 with open(path) as f:
                     data = json.load(f)
                     f1 = data.get("f1") or data.get("test_f1")
-                    auc = data.get("roc_auc") or data.get("auc_roc") or data.get("test_auc")
+                    auc = (
+                        data.get("roc_auc")
+                        or data.get("auc_roc")
+                        or data.get("test_auc")
+                    )
                     if f1 is not None and auc is not None:
                         return {
                             "f1": round(f1, 3),
@@ -412,7 +465,9 @@ def predict(customer: dict, domain: str = "telecom", db: Session = Depends(get_d
 @app.post(
     "/predict/batch", response_model=BatchOutput, dependencies=[Depends(verify_api_key)]
 )
-def predict_batch(batch: LaxBatchInput, db: Session = Depends(get_db)):
+def predict_batch(
+    batch: LaxBatchInput, domain: str = "telecom", db: Session = Depends(get_db)
+):
     if not app.state.model_loaded or app.state.model is None:
         raise HTTPException(status_code=503, detail="Model not loaded")
     t0 = time.time()
@@ -437,7 +492,7 @@ def predict_batch(batch: LaxBatchInput, db: Session = Depends(get_db)):
             )
 
         pred = run_single_prediction(
-            app, validated_customer, db, healed_actions=healed_actions
+            app, validated_customer, db, healed_actions=healed_actions, domain_id=domain
         )
         predictions.append(pred)
 
@@ -454,7 +509,7 @@ def predict_batch(batch: LaxBatchInput, db: Session = Depends(get_db)):
             trigger_drift = True
 
     if trigger_drift:
-        threading.Thread(target=_run_drift_check).start()
+        threading.Thread(target=_run_drift_check, args=(domain,)).start()
 
     return BatchOutput(
         predictions=predictions,
@@ -465,7 +520,9 @@ def predict_batch(batch: LaxBatchInput, db: Session = Depends(get_db)):
 
 
 @app.post("/upload", dependencies=[Depends(verify_api_key)])
-async def upload_csv(file: UploadFile = File(...), domain: str = "telecom", db: Session = Depends(get_db)):
+async def upload_csv(
+    file: UploadFile = File(...), domain: str = "telecom", db: Session = Depends(get_db)
+):
     if not file.filename.endswith(".csv"):
         raise HTTPException(status_code=422, detail="File must be a CSV")
     content = await file.read()
@@ -498,15 +555,20 @@ async def upload_csv(file: UploadFile = File(...), domain: str = "telecom", db: 
     result_df["risk_tier"] = [r["risk_tier"] for r in results]
     result_df["top_factor"] = [r["top_factor"] for r in results]
 
-    # Windows compatible temporary path
-    out_path = os.path.join(tempfile.gettempdir(), "predictions_output.csv")
-    result_df.to_csv(out_path, index=False)
+    # Per-request temp file — a shared fixed path lets concurrent uploads
+    # overwrite each other's results before the response is streamed.
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".csv", delete=False, newline="", encoding="utf-8"
+    ) as tmp:
+        out_path = tmp.name
+        result_df.to_csv(tmp, index=False)
     return FileResponse(out_path, media_type="text/csv", filename="predictions.csv")
 
 
 @app.get("/drift/status", response_model=DriftStatusResponse)
 def drift_status(domain: str = "telecom", db: Session = Depends(get_db)):
     from src.domain_registry import sanitize_domain_id
+
     domain_key = sanitize_domain_id(domain)
     latest = get_latest_drift(db, domain_id=domain_key)
     if not latest:
@@ -535,10 +597,12 @@ def drift_status(domain: str = "telecom", db: Session = Depends(get_db)):
 @app.get("/drift/report")
 def drift_report(domain: str = "telecom", db: Session = Depends(get_db)):
     from src.domain_registry import sanitize_domain_id
+
     domain_key = sanitize_domain_id(domain)
     latest = get_latest_drift(db, domain_id=domain_key)
     if not latest or not os.path.exists(latest.report_path):
         from src.monitor import generate_drift_report
+
         res = generate_drift_report(None, domain_id=domain_key)
         return FileResponse(res["report_path"], media_type="text/html")
 
@@ -547,10 +611,27 @@ def drift_report(domain: str = "telecom", db: Session = Depends(get_db)):
 
     if "Mock fallback" in content or "<html><body><h1>" in content:
         from src.monitor import generate_drift_report
+
         res = generate_drift_report(None, domain_id=domain_key)
         return FileResponse(res["report_path"], media_type="text/html")
 
     return FileResponse(latest.report_path, media_type="text/html")
+
+
+def _claim_retraining_slot() -> bool:
+    """
+    Atomically claim the single retraining slot.
+
+    Returns True if this caller transitioned the status from idle to running and
+    is therefore responsible for launching (and eventually clearing) the retrain.
+    Checking and setting under the lock is what stops two concurrent drift checks
+    from both launching a training run.
+    """
+    with app.state.model_lock:
+        if app.state.retraining_status != "idle":
+            return False
+        app.state.retraining_status = "running"
+        return True
 
 
 def _run_drift_check(domain_id: str = "telecom"):
@@ -558,14 +639,16 @@ def _run_drift_check(domain_id: str = "telecom"):
     import uuid
     import json
     from api.database import SessionLocal
+    from src.domain_registry import sanitize_domain_id
 
+    domain_id = sanitize_domain_id(domain_id)
     db = SessionLocal()
     try:
         # 1. Fetch drift threshold from env
         drift_threshold = float(os.getenv("DRIFT_THRESHOLD", "0.20"))
 
-        # 2. Get the last N inputs from database
-        records = last_n_inputs(db, n=500)
+        # 2. Get the last N inputs from database, scoped to this domain
+        records = last_n_inputs(db, n=500, domain_id=domain_id)
         if len(records) < 50:
             return
 
@@ -598,30 +681,34 @@ def _run_drift_check(domain_id: str = "telecom"):
                 drift_detected=int(drift_detected),
                 drift_score=drift_score,
                 n_samples=report_data["n_samples"],
+                domain_id=domain_id,
             )
 
             # If drift detected, trigger self-healing retraining!
             if drift_detected:
-                if app.state.retraining_status == "idle":
-                    # Trigger retraining in a background thread
-                    app.state.retraining_status = "running"
+                if _claim_retraining_slot():
                     log_self_healing_event(
                         db,
                         "retraining",
                         f"Drift detected (score={drift_score:.2f} >= threshold={drift_threshold:.2f}). Triggering automated retraining.",
+                        domain_id=domain_id,
                     )
                     threading.Thread(
-                        target=run_self_healing_retraining, args=(app,)
+                        target=run_self_healing_retraining, args=(app, domain_id)
                     ).start()
                 else:
                     log_self_healing_event(
                         db,
                         "retraining",
                         f"Drift detected (score={drift_score:.2f} >= threshold={drift_threshold:.2f}), but auto-retraining is already running.",
+                        domain_id=domain_id,
                     )
         except Exception as e:
             log_self_healing_event(
-                db, "retraining", f"Error running drift check: {str(e)}"
+                db,
+                "retraining",
+                f"Error running drift check: {str(e)}",
+                domain_id=domain_id,
             )
     finally:
         db.close()
@@ -635,20 +722,25 @@ def run_self_healing_retraining(app_ref, domain_id: str = "telecom"):
     """
     from api.database import SessionLocal, log_self_healing_event, last_n_inputs
     from src.train import train as run_training_pipeline
-    from src.domain_registry import load_domain_model, load_domain_preprocessor, sanitize_domain_id
+    from src.domain_registry import (
+        load_domain_model,
+        load_domain_preprocessor,
+        sanitize_domain_id,
+    )
 
     domain_id = sanitize_domain_id(domain_id)
     os.environ["TARGET_DOMAIN"] = domain_id
 
     db = SessionLocal()
     try:
-        # 1. Fetch recent production inputs from SQLite
-        records = last_n_inputs(db, n=500)
+        # 1. Fetch recent production inputs from SQLite, scoped to this domain
+        records = last_n_inputs(db, n=500, domain_id=domain_id)
         if not records:
             log_self_healing_event(
                 db,
                 "retraining",
                 f"Auto-retraining aborted for domain '{domain_id}': no prediction records found.",
+                domain_id=domain_id,
             )
             app_ref.state.retraining_status = "idle"
             db.close()
@@ -662,7 +754,9 @@ def run_self_healing_retraining(app_ref, domain_id: str = "telecom"):
             if "customerID" in raw_df.columns and "Churn" in raw_df.columns:
                 raw_df["customerID"] = raw_df["customerID"].astype(str).str.strip()
                 raw_labels = (
-                    raw_df.set_index("customerID")["Churn"].map({"Yes": 1, "No": 0}).to_dict()
+                    raw_df.set_index("customerID")["Churn"]
+                    .map({"Yes": 1, "No": 0})
+                    .to_dict()
                 )
 
         # Reconstruct DataFrame with labels
@@ -685,6 +779,7 @@ def run_self_healing_retraining(app_ref, domain_id: str = "telecom"):
                         db,
                         "data_quality",
                         f"Database-level self-healing corrected features for retraining of Customer {cust_id or 'N/A'}: {', '.join(db_healed_actions)}",
+                        domain_id=domain_id,
                     )
 
                 label = None
@@ -696,7 +791,9 @@ def run_self_healing_retraining(app_ref, domain_id: str = "telecom"):
                 else:
                     # Enforce pseudo-label ratio cap (max 30% pseudo-labels) and weight decay (0.25)
                     MAX_PSEUDO_LABEL_RATIO = 0.30
-                    current_pseudo_ratio = pseudo_label_count / max(1, (true_label_count + pseudo_label_count))
+                    current_pseudo_ratio = pseudo_label_count / max(
+                        1, (true_label_count + pseudo_label_count)
+                    )
                     if current_pseudo_ratio < MAX_PSEUDO_LABEL_RATIO:
                         if r.probability >= 0.85:
                             label = 1
@@ -722,6 +819,7 @@ def run_self_healing_retraining(app_ref, domain_id: str = "telecom"):
                 db,
                 "retraining",
                 f"Auto-retraining aborted for domain '{domain_id}': no labeled records resolved.",
+                domain_id=domain_id,
             )
             app_ref.state.retraining_status = "idle"
             db.close()
@@ -750,6 +848,7 @@ def run_self_healing_retraining(app_ref, domain_id: str = "telecom"):
             db,
             "retraining",
             f"Starting retraining pipeline for domain '{domain_id}'. Combined dataset has {len(combined_train_df)} samples ({true_label_count} true labels, {pseudo_label_count} pseudo-labels).",
+            domain_id=domain_id,
         )
 
         run_training_pipeline(params)
@@ -776,14 +875,20 @@ def run_self_healing_retraining(app_ref, domain_id: str = "telecom"):
             domain_id=domain_id,
         )
         from src.notifications import send_slack_alert
+
         send_slack_alert(
             "retraining",
             f"Challenger Model Registered for domain {domain_id}",
-            f"Auto-retraining completed. Challenger version registered for shadow deployment evaluation.",
+            "Auto-retraining completed. Challenger version registered for shadow deployment evaluation.",
             domain_id=domain_id,
         )
     except Exception as e:
-        log_self_healing_event(db, "retraining", f"Auto-retraining failed: {str(e)}")
+        log_self_healing_event(
+            db,
+            "retraining",
+            f"Auto-retraining failed: {str(e)}",
+            domain_id=domain_id,
+        )
         # Clean up combined path on error
         combined_path = "data/processed/train_retrain.csv"
         if os.path.exists(combined_path):
@@ -797,8 +902,11 @@ def run_self_healing_retraining(app_ref, domain_id: str = "telecom"):
 
 
 @app.get("/self-healing/logs")
-def get_sh_logs(domain: str = "telecom", limit: int = 100, db: Session = Depends(get_db)):
+def get_sh_logs(
+    domain: str = "telecom", limit: int = 100, db: Session = Depends(get_db)
+):
     from src.domain_registry import sanitize_domain_id
+
     domain_key = sanitize_domain_id(domain)
     logs = get_self_healing_logs(db, limit=limit, domain_id=domain_key)
     return [
@@ -812,22 +920,31 @@ def get_sh_logs(domain: str = "telecom", limit: int = 100, db: Session = Depends
     ]
 
 
-@app.post("/self-healing/trigger-retrain", dependencies=[Depends(verify_scope("write:retrain"))])
+@app.post(
+    "/self-healing/trigger-retrain",
+    dependencies=[Depends(verify_scope("write:retrain"))],
+)
 def trigger_retrain(domain: str = "telecom", db: Session = Depends(get_db)):
     from src.domain_registry import sanitize_domain_id
+
     domain_key = sanitize_domain_id(domain)
-    if app.state.retraining_status == "running":
+    if not _claim_retraining_slot():
         return {
             "status": "already_running",
             "message": f"Retraining is already running for domain '{domain_key}'.",
         }
 
-    app.state.retraining_status = "running"
     log_self_healing_event(
-        db, "retraining", f"Manually triggered retraining for domain '{domain_key}' from self-healing console.", domain_id=domain_key
+        db,
+        "retraining",
+        f"Manually triggered retraining for domain '{domain_key}' from self-healing console.",
+        domain_id=domain_key,
     )
     threading.Thread(target=run_self_healing_retraining, args=(app, domain_key)).start()
-    return {"status": "started", "message": f"Asynchronous retraining triggered for domain '{domain_key}'."}
+    return {
+        "status": "started",
+        "message": f"Asynchronous retraining triggered for domain '{domain_key}'.",
+    }
 
 
 @app.post("/domain/bootstrap", dependencies=[Depends(verify_scope("admin:bootstrap"))])
@@ -836,7 +953,12 @@ def bootstrap_domain_endpoint(payload: dict):
     if not domain_name:
         raise HTTPException(status_code=400, detail="domain_name is required")
 
-    from src.domain_registry import bootstrap_custom_domain, load_domain_model, load_domain_preprocessor
+    from src.domain_registry import (
+        bootstrap_custom_domain,
+        load_domain_model,
+        load_domain_preprocessor,
+    )
+
     domain_key = bootstrap_custom_domain(domain_name)
 
     d_model = load_domain_model(domain_key)
@@ -849,38 +971,53 @@ def bootstrap_domain_endpoint(payload: dict):
             "version": f"{domain_key}-v1",
         }
 
-    return {"status": "success", "domain_key": domain_key, "message": f"Domain '{domain_name}' bootstrapped and isolated."}
+    return {
+        "status": "success",
+        "domain_key": domain_key,
+        "message": f"Domain '{domain_name}' bootstrapped and isolated.",
+    }
 
 
 @app.get("/model/shadow-status")
 def shadow_status(domain: str = "telecom", db: Session = Depends(get_db)):
     from src.domain_registry import sanitize_domain_id
+
     domain_key = sanitize_domain_id(domain)
     from api.database import get_shadow_stats
+
     return get_shadow_stats(db, domain_id=domain_key)
 
 
 @app.post("/model/promote", dependencies=[Depends(verify_scope("admin:promote"))])
 def promote_challenger(domain: str = "telecom", db: Session = Depends(get_db)):
     from src.domain_registry import sanitize_domain_id
+
     domain_key = sanitize_domain_id(domain)
     domain_container = getattr(app.state, "model_registry", {}).get(domain_key)
     if not domain_container or "challenger" not in domain_container:
-        return {"status": "info", "message": f"No challenger model active for domain '{domain_key}'. Current champion is active."}
+        return {
+            "status": "info",
+            "message": f"No challenger model active for domain '{domain_key}'. Current champion is active.",
+        }
 
     with app.state.model_lock:
         domain_container["champion"] = domain_container["challenger"]
         domain_container["model"] = domain_container["challenger"]["model"]
-        domain_container["preprocessor"] = domain_container["challenger"]["preprocessor"]
+        domain_container["preprocessor"] = domain_container["challenger"][
+            "preprocessor"
+        ]
         domain_container["version"] = domain_container["challenger"]["version"]
 
         # Synchronize ONNX runtime engine upon model promotion
         try:
             from src.onnx_exporter import ONNXInferenceEngine
             from src.domain_registry import get_domain_model_dir
+
             onnx_path = str(get_domain_model_dir(domain_key) / "model.onnx")
             if "onnx_engine" in domain_container["challenger"]:
-                domain_container["onnx_engine"] = domain_container["challenger"]["onnx_engine"]
+                domain_container["onnx_engine"] = domain_container["challenger"][
+                    "onnx_engine"
+                ]
             elif Path(onnx_path).exists():
                 domain_container["onnx_engine"] = ONNXInferenceEngine(onnx_path)
         except Exception:
@@ -889,9 +1026,24 @@ def promote_challenger(domain: str = "telecom", db: Session = Depends(get_db)):
         del domain_container["challenger"]
 
     from api.database import log_self_healing_event
-    log_self_healing_event(db, "retraining", f"Promoted Challenger model to Champion for domain '{domain_key}'.", domain_id=domain_key)
+
+    log_self_healing_event(
+        db,
+        "retraining",
+        f"Promoted Challenger model to Champion for domain '{domain_key}'.",
+        domain_id=domain_key,
+    )
 
     from src.notifications import send_slack_alert
-    send_slack_alert("promotion", f"Model Promoted for domain {domain_key}", f"Challenger model version {domain_container['version']} promoted to Champion.", domain_id=domain_key)
 
-    return {"status": "success", "message": f"Challenger promoted to Champion for domain '{domain_key}'."}
+    send_slack_alert(
+        "promotion",
+        f"Model Promoted for domain {domain_key}",
+        f"Challenger model version {domain_container['version']} promoted to Champion.",
+        domain_id=domain_key,
+    )
+
+    return {
+        "status": "success",
+        "message": f"Challenger promoted to Champion for domain '{domain_key}'.",
+    }

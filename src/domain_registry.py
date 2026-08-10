@@ -1,4 +1,3 @@
-import os
 import shutil
 import joblib
 import pandas as pd
@@ -16,15 +15,20 @@ DOMAIN_KEY_MAP = {
     "Fitness Club Member Churn": "fitness",
 }
 
+
 def sanitize_domain_id(domain_name: str) -> str:
     """Convert domain name into a clean filesystem folder key."""
     if domain_name in DOMAIN_KEY_MAP:
         return DOMAIN_KEY_MAP[domain_name]
     clean_name = domain_name.lower().replace(" ", "_").replace("-", "_")
     clean_name = "".join(c for c in clean_name if c.isalnum() or c == "_")
-    if not clean_name.startswith("custom_") and clean_name not in DOMAIN_KEY_MAP.values():
+    if (
+        not clean_name.startswith("custom_")
+        and clean_name not in DOMAIN_KEY_MAP.values()
+    ):
         clean_name = f"custom_{clean_name}"
     return clean_name
+
 
 def get_domain_model_dir(domain_id: str) -> Path:
     domain_id = sanitize_domain_id(domain_id)
@@ -32,10 +36,12 @@ def get_domain_model_dir(domain_id: str) -> Path:
     domain_dir.mkdir(parents=True, exist_ok=True)
     return domain_dir
 
+
 def get_domain_baseline_path(domain_id: str) -> Path:
     domain_id = sanitize_domain_id(domain_id)
     BASELINES_DIR.mkdir(parents=True, exist_ok=True)
     return BASELINES_DIR / f"{domain_id}_baseline.csv"
+
 
 def ensure_domain_initialized(domain_id: str):
     """Ensure a domain has isolated model, preprocessor, and baseline artifacts."""
@@ -72,15 +78,18 @@ def ensure_domain_initialized(domain_id: str):
         elif default_test_df.exists():
             shutil.copy(default_test_df, baseline_path)
 
+
 def load_domain_model(domain_id: str):
     ensure_domain_initialized(domain_id)
     domain_dir = get_domain_model_dir(domain_id)
     return joblib.load(domain_dir / "model.joblib")
 
+
 def load_domain_preprocessor(domain_id: str):
     ensure_domain_initialized(domain_id)
     domain_dir = get_domain_model_dir(domain_id)
     return joblib.load(domain_dir / "preprocessor.joblib")
+
 
 def bootstrap_custom_domain(domain_name: str, baseline_df: pd.DataFrame = None) -> str:
     """Bootstrap isolated artifacts for a brand new custom domain."""

@@ -22,12 +22,13 @@ def prometheus_metrics(db: Session = Depends(get_db)):
     school_preds = count_predictions(db, domain_id="school")
     ecommerce_preds = count_predictions(db, domain_id="ecommerce")
     fitness_preds = count_predictions(db, domain_id="fitness")
-    
+
     drift_rec = get_latest_drift(db)
     drift_score = drift_rec.drift_score if drift_rec else 0.0
     uptime = time.time() - START_TIME
 
     from api.database import get_shadow_stats, risk_distribution, get_self_healing_logs
+
     shadow_stats = get_shadow_stats(db)
     avg_delta = shadow_stats.get("avg_delta", 0.0)
 
@@ -68,4 +69,5 @@ def prometheus_metrics(db: Session = Depends(get_db)):
 
     content = "\n".join(lines) + "\n"
     from fastapi.responses import PlainTextResponse
+
     return PlainTextResponse(content, media_type="text/plain; version=0.0.4")

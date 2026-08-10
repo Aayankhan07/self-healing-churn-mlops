@@ -62,7 +62,9 @@ def test_admin_endpoints_require_auth(test_client):
     r_retrain = test_client.post("/self-healing/trigger-retrain")
     assert r_retrain.status_code == 422
 
-    r_bootstrap = test_client.post("/domain/bootstrap", json={"domain_name": "TestDomain"})
+    r_bootstrap = test_client.post(
+        "/domain/bootstrap", json={"domain_name": "TestDomain"}
+    )
     assert r_bootstrap.status_code == 422
 
     r_promote = test_client.post("/model/promote")
@@ -70,14 +72,33 @@ def test_admin_endpoints_require_auth(test_client):
 
     # Invalid API Key
     bad_headers = {"X-API-Key": "invalid-key"}
-    assert test_client.post("/self-healing/trigger-retrain", headers=bad_headers).status_code == 403
-    assert test_client.post("/domain/bootstrap", json={"domain_name": "TestDomain"}, headers=bad_headers).status_code == 403
+    assert (
+        test_client.post(
+            "/self-healing/trigger-retrain", headers=bad_headers
+        ).status_code
+        == 403
+    )
+    assert (
+        test_client.post(
+            "/domain/bootstrap", json={"domain_name": "TestDomain"}, headers=bad_headers
+        ).status_code
+        == 403
+    )
     assert test_client.post("/model/promote", headers=bad_headers).status_code == 403
 
     # Valid API Key
     good_headers = {"X-API-Key": "dev-key-change-in-prod"}
-    assert test_client.post("/self-healing/trigger-retrain", headers=good_headers).status_code in [200, 500]
-    assert test_client.post("/domain/bootstrap", json={"domain_name": "TestDomain"}, headers=good_headers).status_code == 200
+    assert test_client.post(
+        "/self-healing/trigger-retrain", headers=good_headers
+    ).status_code in [200, 500]
+    assert (
+        test_client.post(
+            "/domain/bootstrap",
+            json={"domain_name": "TestDomain"},
+            headers=good_headers,
+        ).status_code
+        == 200
+    )
     assert test_client.post("/model/promote", headers=good_headers).status_code == 200
 
 
@@ -93,13 +114,25 @@ def test_rbac_scopes(test_client, valid_customer):
 
     # 2. Engineer key: has 'read:predict' and 'write:retrain' scopes
     eng_headers = {"X-API-Key": "engineer-key"}
-    assert test_client.post("/predict", json=valid_customer, headers=eng_headers).status_code == 200
-    assert test_client.post("/self-healing/trigger-retrain", headers=eng_headers).status_code in [200, 500]
-    
+    assert (
+        test_client.post(
+            "/predict", json=valid_customer, headers=eng_headers
+        ).status_code
+        == 200
+    )
+    assert test_client.post(
+        "/self-healing/trigger-retrain", headers=eng_headers
+    ).status_code in [200, 500]
+
     r_eng_admin = test_client.post("/model/promote", headers=eng_headers)
     assert r_eng_admin.status_code == 403
 
     # 3. Admin key: has all scopes
     admin_headers = {"X-API-Key": "dev-key-change-in-prod"}
-    assert test_client.post("/predict", json=valid_customer, headers=admin_headers).status_code == 200
+    assert (
+        test_client.post(
+            "/predict", json=valid_customer, headers=admin_headers
+        ).status_code
+        == 200
+    )
     assert test_client.post("/model/promote", headers=admin_headers).status_code == 200

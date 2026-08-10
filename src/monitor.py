@@ -27,7 +27,9 @@ except Exception as e:
 
 
 def generate_drift_report(
-    current_data: pd.DataFrame, reference_data: pd.DataFrame = None, domain_id: str = "telecom"
+    current_data: pd.DataFrame,
+    reference_data: pd.DataFrame = None,
+    domain_id: str = "telecom",
 ) -> dict:
     """
     Compare current incoming data to domain reference baseline.
@@ -136,7 +138,11 @@ def generate_drift_report(
         }
 
     if reference_data is None:
-        from src.domain_registry import get_domain_baseline_path, ensure_domain_initialized
+        from src.domain_registry import (
+            get_domain_baseline_path,
+            ensure_domain_initialized,
+        )
+
         ensure_domain_initialized(domain_id)
         baseline_path = get_domain_baseline_path(domain_id)
         if baseline_path.exists():

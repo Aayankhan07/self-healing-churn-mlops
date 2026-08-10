@@ -11,12 +11,14 @@ import urllib.request
 logger = logging.getLogger(__name__)
 
 
-def send_slack_alert(event_type: str, title: str, details: str, domain_id: str = "telecom") -> bool:
+def send_slack_alert(
+    event_type: str, title: str, details: str, domain_id: str = "telecom"
+) -> bool:
     """
     Send Webhook notification to Slack / External Webhook URL if configured via SLACK_WEBHOOK_URL.
     """
     webhook_url = os.getenv("SLACK_WEBHOOK_URL", "")
-    
+
     payload = {
         "text": f"[ChurnGuard Alert | Domain: {domain_id}] {title}",
         "attachments": [

@@ -175,10 +175,6 @@ def test_predict_batch_contract(test_client, valid_customer):
     assert set(body["predictions"][0]) == PREDICTION_KEYS
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Phase 1 bug #3: predict_batch has no domain param, always scores telecom",
-)
 def test_predict_batch_honors_domain(test_client, valid_customer):
     body = test_client.post(
         "/predict/batch?domain=school",

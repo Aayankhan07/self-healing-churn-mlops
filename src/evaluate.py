@@ -24,7 +24,9 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 from src.features import engineer_features  # noqa: E402
 
 
-def compute_fairness_metrics(model, X_raw: pd.DataFrame, y_true: pd.Series) -> Dict[str, Any]:
+def compute_fairness_metrics(
+    model, X_raw: pd.DataFrame, y_true: pd.Series
+) -> Dict[str, Any]:
     """
     Compute per-subgroup fairness and bias metrics across sensitive attributes:
     - SeniorCitizen (Senior vs Non-Senior)
@@ -42,15 +44,21 @@ def compute_fairness_metrics(model, X_raw: pd.DataFrame, y_true: pd.Series) -> D
         sub_y = y_true[mask]
         sub_pred = y_pred[mask]
         if len(sub_y) == 0:
-            return {"selection_rate": 0.0, "recall_tpr": 0.0, "fpr": 0.0, "f1": 0.0, "count": 0}
-        
+            return {
+                "selection_rate": 0.0,
+                "recall_tpr": 0.0,
+                "fpr": 0.0,
+                "f1": 0.0,
+                "count": 0,
+            }
+
         selection_rate = float(np.mean(sub_pred))
         f1 = float(f1_score(sub_y, sub_pred, zero_division=0))
         rec = float(recall_score(sub_y, sub_pred, zero_division=0))
-        
-        neg_mask = (sub_y == 0)
+
+        neg_mask = sub_y == 0
         fpr = float(np.mean(sub_pred[neg_mask])) if np.sum(neg_mask) > 0 else 0.0
-        
+
         return {
             "selection_rate": round(selection_rate, 4),
             "recall_tpr": round(rec, 4),
@@ -61,7 +69,9 @@ def compute_fairness_metrics(model, X_raw: pd.DataFrame, y_true: pd.Series) -> D
 
     # 1. SeniorCitizen
     if "SeniorCitizen" in df.columns:
-        sen_mask = (df["SeniorCitizen"] == 1) | (df["SeniorCitizen"].astype(str).str.lower().isin(["1", "yes", "true"]))
+        sen_mask = (df["SeniorCitizen"] == 1) | (
+            df["SeniorCitizen"].astype(str).str.lower().isin(["1", "yes", "true"])
+        )
         subgroup_metrics["SeniorCitizen"] = {
             "Senior": get_group_stats(sen_mask),
             "Non-Senior": get_group_stats(~sen_mask),
@@ -71,16 +81,16 @@ def compute_fairness_metrics(model, X_raw: pd.DataFrame, y_true: pd.Series) -> D
     if "Contract" in df.columns:
         subgroup_metrics["Contract"] = {}
         for ctype in ["Month-to-month", "One year", "Two year"]:
-            c_mask = (df["Contract"].astype(str) == ctype)
+            c_mask = df["Contract"].astype(str) == ctype
             if np.sum(c_mask) > 0:
                 subgroup_metrics["Contract"][ctype] = get_group_stats(c_mask)
 
     # 3. Tenure Bucket
     if "tenure" in df.columns:
         ten = pd.to_numeric(df["tenure"], errors="coerce").fillna(0)
-        new_mask = (ten <= 12)
+        new_mask = ten <= 12
         mid_mask = (ten > 12) & (ten <= 36)
-        long_mask = (ten > 36)
+        long_mask = ten > 36
         subgroup_metrics["TenureBucket"] = {
             "New (0-12m)": get_group_stats(new_mask),
             "Mid (13-36m)": get_group_stats(mid_mask),
@@ -100,13 +110,13 @@ def compute_fairness_metrics(model, X_raw: pd.DataFrame, y_true: pd.Series) -> D
         tpr_diff = abs(s_stats["recall_tpr"] - ns_stats["recall_tpr"])
         fpr_diff = abs(s_stats["fpr"] - ns_stats["fpr"])
         eo_diff = round(max(tpr_diff, fpr_diff), 4)
-        
+
         # EEOC Four-Fifths Rule Ratio calculation: min_rate / max_rate >= 0.80
         max_sr = max(sr_s, sr_ns)
         min_sr = min(sr_s, sr_ns)
         four_fifths_ratio = round(min_sr / max_sr, 4) if max_sr > 0 else 1.0
 
-    passes_four_fifths = (four_fifths_ratio >= 0.80)
+    passes_four_fifths = four_fifths_ratio >= 0.80
     passes_flat_diff = (dp_diff <= 0.15) and (eo_diff <= 0.15)
 
     return {
@@ -114,11 +124,17 @@ def compute_fairness_metrics(model, X_raw: pd.DataFrame, y_true: pd.Series) -> D
         "demographic_parity_difference": dp_diff,
         "equalized_odds_difference": eo_diff,
         "four_fifths_selection_ratio": four_fifths_ratio,
-        "bias_status": "acceptable" if (passes_four_fifths and passes_flat_diff) else "disparity_detected",
+        "bias_status": (
+            "acceptable"
+            if (passes_four_fifths and passes_flat_diff)
+            else "disparity_detected"
+        ),
     }
 
 
-def compute_metrics(model, X: pd.DataFrame, y: pd.Series, X_raw: pd.DataFrame = None) -> Dict[str, Any]:
+def compute_metrics(
+    model, X: pd.DataFrame, y: pd.Series, X_raw: pd.DataFrame = None
+) -> Dict[str, Any]:
     y_pred = model.predict(X)
     y_proba = model.predict_proba(X)[:, 1]
     res = {
@@ -156,7 +172,9 @@ def get_top_shap_factors(
     """
     X_transformed = preprocessor.transform(X_raw)
     feature_names = get_feature_names(preprocessor)
-    xgb_model = model.named_steps.get("model") if hasattr(model, "named_steps") else model
+    xgb_model = (
+        model.named_steps.get("model") if hasattr(model, "named_steps") else model
+    )
 
     sv = None
 

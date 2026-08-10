@@ -1,11 +1,8 @@
 """Unit tests for Challenger Gate blocking proof and ONNX execution path."""
 
-import pytest
 import pandas as pd
-from unittest.mock import MagicMock
 from api.main import _hash_key
 from src.evaluate import compute_fairness_metrics
-from sklearn.dummy import DummyClassifier
 
 
 def test_api_key_sha256_hashing():
@@ -17,6 +14,7 @@ def test_api_key_sha256_hashing():
 
 def test_high_entropy_key_generation():
     from api.main import generate_high_entropy_key
+
     token = generate_high_entropy_key("cg_admin")
     assert token.startswith("cg_admin_")
     assert len(token) > 40  # 256-bit secure URL-safe entropy
@@ -32,10 +30,24 @@ def test_fairness_gate_blocks_biased_model(valid_customer):
     y_list = []
     for i in range(10):
         # Non-seniors get label 0
-        rows.append({**valid_customer, "SeniorCitizen": 0, "tenure": 12, "Contract": "Month-to-month"})
+        rows.append(
+            {
+                **valid_customer,
+                "SeniorCitizen": 0,
+                "tenure": 12,
+                "Contract": "Month-to-month",
+            }
+        )
         y_list.append(0)
         # Seniors get label 1
-        rows.append({**valid_customer, "SeniorCitizen": 1, "tenure": 12, "Contract": "Month-to-month"})
+        rows.append(
+            {
+                **valid_customer,
+                "SeniorCitizen": 1,
+                "tenure": 12,
+                "Contract": "Month-to-month",
+            }
+        )
         y_list.append(1)
 
     X_raw = pd.DataFrame(rows)
@@ -51,6 +63,7 @@ def test_fairness_gate_blocks_biased_model(valid_customer):
                 else:
                     preds.append([0.9, 0.1])
             import numpy as np
+
             return np.array(preds)
 
         def predict(self, df):

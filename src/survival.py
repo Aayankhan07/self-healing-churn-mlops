@@ -7,7 +7,9 @@ import math
 from typing import Dict, Any
 
 
-def calculate_survival_curve(tenure: float, probability: float, domain_id: str = "telecom") -> Dict[str, Any]:
+def calculate_survival_curve(
+    tenure: float, probability: float, domain_id: str = "telecom"
+) -> Dict[str, Any]:
     """
     Calculate time-to-churn days and survival timeline probabilities (30, 60, 90, 180 days).
     Uses a Weibull-inspired hazard rate mapping based on classifier churn probability and customer tenure.
@@ -16,7 +18,7 @@ def calculate_survival_curve(tenure: float, probability: float, domain_id: str =
     """
     tenure_months = max(1.0, float(tenure or 1.0))
     p_churn = max(0.01, min(0.99, float(probability or 0.5)))
-    
+
     # Base hazard rate lambda (per month) derived from churn probability and tenure
     base_lambda = (p_churn / 0.5) * (1.0 / math.log(tenure_months + 1.0 + math.e))
     shape_beta = 1.15  # Accelerated hazard rate over time

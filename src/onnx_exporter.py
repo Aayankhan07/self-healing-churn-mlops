@@ -5,10 +5,8 @@ Converts trained XGBoost pipelines to ONNX format for sub-5ms low-latency infere
 
 import logging
 import os
-from pathlib import Path
 import numpy as np
 import pandas as pd
-from typing import Dict, Any, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +18,6 @@ def export_xgboost_to_onnx(model, sample_df: pd.DataFrame, output_path: str) -> 
     try:
         from skl2onnx import convert_sklearn
         from skl2onnx.common.data_types import FloatTensorType, StringTensorType
-        import onnxmltools
 
         initial_types = []
         for col in sample_df.columns:
@@ -64,7 +61,10 @@ class ONNXInferenceEngine:
         if self.session is None:
             raise RuntimeError("ONNX session not initialized.")
 
-        inputs = {input_meta.name: df[[input_meta.name]].values for input_meta in self.session.get_inputs()}
+        inputs = {
+            input_meta.name: df[[input_meta.name]].values
+            for input_meta in self.session.get_inputs()
+        }
         outputs = self.session.run(None, inputs)
         # Assuming second output holds probabilities dictionary or array
         probabilities = outputs[1]

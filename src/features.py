@@ -82,7 +82,12 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     )
 
     # Security & Protection score
-    security_cols = ["OnlineSecurity", "OnlineBackup", "DeviceProtection", "TechSupport"]
+    security_cols = [
+        "OnlineSecurity",
+        "OnlineBackup",
+        "DeviceProtection",
+        "TechSupport",
+    ]
     df["security_protection_score"] = (
         df[security_cols].apply(lambda col: col == "Yes").sum(axis=1)
     )

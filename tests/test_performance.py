@@ -1,9 +1,7 @@
 """Unit tests for performance utilities and Locust load test script structure."""
 
-import os
 from pathlib import Path
-from src.onnx_exporter import export_xgboost_to_onnx, ONNXInferenceEngine
-import pandas as pd
+from src.onnx_exporter import ONNXInferenceEngine
 
 
 def test_locust_script_exists():
@@ -34,7 +32,7 @@ def test_terraform_iac_files_exist():
     assert (tf_dir / "main.tf").exists()
     assert (tf_dir / "variables.tf").exists()
     assert (tf_dir / "outputs.tf").exists()
-    
+
     content = (tf_dir / "main.tf").read_text()
     assert "aws_ecs_service" in content
     assert "aws_db_instance" in content

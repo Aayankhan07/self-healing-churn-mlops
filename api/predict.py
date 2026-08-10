@@ -37,21 +37,33 @@ def run_single_prediction(
         healed_actions = []
 
     state = getattr(getattr(request, "app", request), "state", request)
-    from src.domain_registry import load_domain_model, load_domain_preprocessor, sanitize_domain_id
+    from src.domain_registry import (
+        load_domain_model,
+        load_domain_preprocessor,
+        sanitize_domain_id,
+    )
+
     domain_key = sanitize_domain_id(domain_id)
 
     model = None
     preprocessor = None
     challenger_model = None
+    domain_container = None
     model_version = f"{domain_key}-v1"
 
-    if hasattr(state, "model_lock") and hasattr(state, "model_registry") and domain_key in getattr(state, "model_registry", {}):
+    if (
+        hasattr(state, "model_lock")
+        and hasattr(state, "model_registry")
+        and domain_key in getattr(state, "model_registry", {})
+    ):
         with state.model_lock:
             domain_container = state.model_registry[domain_key]
             model = domain_container.get("model")
             preprocessor = domain_container.get("preprocessor")
             model_version = domain_container.get("version", f"{domain_key}-v1")
-            if "challenger" in domain_container and isinstance(domain_container["challenger"], dict):
+            if "challenger" in domain_container and isinstance(
+                domain_container["challenger"], dict
+            ):
                 challenger_model = domain_container["challenger"].get("model")
     elif hasattr(state, "model_lock") and hasattr(state, "model_container"):
         with state.model_lock:
@@ -75,8 +87,8 @@ def run_single_prediction(
     df = engineer_features(df)
 
     # Check for ONNX Runtime acceleration engine
-    onnx_engine = domain_container.get("onnx_engine") if 'domain_container' in locals() and domain_container else None
-    
+    onnx_engine = domain_container.get("onnx_engine") if domain_container else None
+
     if onnx_engine is not None:
         try:
             proba = float(onnx_engine.predict_proba(df)[0][1])
@@ -93,7 +105,10 @@ def run_single_prediction(
         try:
             challenger_proba = float(challenger_model.predict_proba(df)[0][1])
             from api.database import log_shadow_prediction
-            log_shadow_prediction(db, domain_key, customer_id or "N/A", proba, challenger_proba)
+
+            log_shadow_prediction(
+                db, domain_key, customer_id or "N/A", proba, challenger_proba
+            )
         except Exception:
             pass
 
@@ -107,11 +122,17 @@ def run_single_prediction(
 
     # Upgrade 1: Generate retention playbook
     from src.playbooks import generate_retention_playbook
-    recommended_actions = generate_retention_playbook(domain_id, raw_factors, data, risk_tier)
+
+    recommended_actions = generate_retention_playbook(
+        domain_id, raw_factors, data, risk_tier
+    )
 
     # Upgrade 2: Calculate survival timeline
     from src.survival import calculate_survival_curve
-    survival = calculate_survival_curve(tenure=data.get("tenure", 1), probability=proba, domain_id=domain_id)
+
+    survival = calculate_survival_curve(
+        tenure=data.get("tenure", 1), probability=proba, domain_id=domain_id
+    )
 
     prediction_id = str(uuid.uuid4())
     input_hash = hash_input(data)

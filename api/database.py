@@ -62,10 +62,15 @@ class ShadowPredictionLog(Base):
 def init_db():
     Base.metadata.create_all(bind=engine)
     from sqlalchemy import text
+
     with engine.connect() as conn:
         for tbl in ["predictions", "self_healing_logs", "drift_reports"]:
             try:
-                conn.execute(text(f"ALTER TABLE {tbl} ADD COLUMN domain_id VARCHAR DEFAULT 'telecom'"))
+                conn.execute(
+                    text(
+                        f"ALTER TABLE {tbl} ADD COLUMN domain_id VARCHAR DEFAULT 'telecom'"
+                    )
+                )
                 conn.commit()
             except Exception:
                 pass
@@ -146,7 +151,13 @@ def last_n_inputs(db, n: int = 500, domain_id: str = None):
 
 
 def log_drift_report(
-    db, report_id, report_path, drift_detected, drift_score, n_samples, domain_id: str = "telecom"
+    db,
+    report_id,
+    report_path,
+    drift_detected,
+    drift_score,
+    n_samples,
+    domain_id: str = "telecom",
 ):
     record = DriftReport(
         id=report_id,
@@ -167,7 +178,9 @@ def get_latest_drift(db, domain_id: str = None):
     return query.order_by(DriftReport.created_at.desc()).first()
 
 
-def log_self_healing_event(db, event_type: str, description: str, domain_id: str = "telecom"):
+def log_self_healing_event(
+    db, event_type: str, description: str, domain_id: str = "telecom"
+):
     import uuid
 
     record = SelfHealingLog(
@@ -185,15 +198,14 @@ def get_self_healing_logs(db, limit: int = 100, domain_id: str = None):
     query = db.query(SelfHealingLog)
     if domain_id:
         query = query.filter(SelfHealingLog.domain_id == domain_id)
-    return (
-        query.order_by(SelfHealingLog.created_at.desc())
-        .limit(limit)
-        .all()
-    )
+    return query.order_by(SelfHealingLog.created_at.desc()).limit(limit).all()
 
 
-def log_shadow_prediction(db, domain_id: str, customer_id: str, champion_proba: float, challenger_proba: float):
+def log_shadow_prediction(
+    db, domain_id: str, customer_id: str, champion_proba: float, challenger_proba: float
+):
     import uuid
+
     delta = abs(champion_proba - challenger_proba)
     record = ShadowPredictionLog(
         id=str(uuid.uuid4()),

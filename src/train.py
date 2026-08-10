@@ -29,6 +29,7 @@ def load_split(path: str, target: str = "Churn"):
     df = pd.read_csv(path)
     if target not in df.columns:
         import numpy as np
+
         np.random.seed(42)
         df[target] = np.random.choice([0, 1], size=len(df), p=[0.75, 0.25])
     return df.drop(columns=[target]), df[target]
@@ -104,20 +105,23 @@ def train(params: dict):
 
         metrics = compute_metrics(final_pipeline, X_val, y_val, X_val_raw)
         # Separate float metrics for MLflow logging
-        mlflow_metrics = {k: v for k, v in metrics.items() if isinstance(v, (int, float))}
+        mlflow_metrics = {
+            k: v for k, v in metrics.items() if isinstance(v, (int, float))
+        }
         mlflow.log_metrics(mlflow_metrics)
         logger.info(f"Val metrics: {metrics}")
 
         # Save preprocessor separately for inference (needed for SHAP)
         domain_id = os.getenv("TARGET_DOMAIN", "telecom")
         from src.domain_registry import get_domain_model_dir
+
         out_dir = get_domain_model_dir(domain_id)
 
         save_preprocessor(preprocessor, str(out_dir / "preprocessor.joblib"))
         import joblib
 
         joblib.dump(final_pipeline, str(out_dir / "model.joblib"))
-        
+
         # Also copy to root models for backwards compatibility
         Path("models").mkdir(exist_ok=True)
         joblib.dump(final_pipeline, "models/model.joblib")
