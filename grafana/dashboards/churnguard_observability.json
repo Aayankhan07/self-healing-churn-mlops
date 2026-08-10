@@ -1,0 +1,60 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 0 },
+      "id": 1,
+      "title": "Total Prediction Volume",
+      "type": "stat",
+      "targets": [{ "expr": "churnguard_predictions_total", "legendFormat": "Total Predictions" }]
+    },
+    {
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 0 },
+      "id": 2,
+      "title": "Evidently AI Dataset Drift Score",
+      "type": "stat",
+      "targets": [{ "expr": "churnguard_drift_score", "legendFormat": "Drift Score" }]
+    },
+    {
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 0 },
+      "id": 3,
+      "title": "Champion/Challenger Divergence (Mean Δ)",
+      "type": "stat",
+      "targets": [{ "expr": "churnguard_shadow_divergence_delta", "legendFormat": "Avg Δ" }]
+    },
+    {
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 0 },
+      "id": 4,
+      "title": "Self-Healing Events Total",
+      "type": "stat",
+      "targets": [{ "expr": "churnguard_self_healing_events_total", "legendFormat": "Self-Healing Events" }]
+    },
+    {
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+      "id": 5,
+      "title": "Predictions Volume per Industry Domain",
+      "type": "timeseries",
+      "targets": [{ "expr": "churnguard_predictions_domain_total", "legendFormat": "{{domain}}" }]
+    },
+    {
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+      "id": 6,
+      "title": "Risk Tier Distribution (High / Medium / Low)",
+      "type": "barplot",
+      "targets": [{ "expr": "churnguard_risk_tier_count", "legendFormat": "{{tier}}" }]
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["mlops", "churnguard", "observability"],
+  "time": { "from": "now-1h", "to": "now" },
+  "title": "ChurnGuard MLOps Enterprise Observability",
+  "uid": "churnguard-obs"
+}

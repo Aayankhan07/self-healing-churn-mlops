@@ -1,0 +1,43 @@
+stages:
+  prepare:
+    cmd: python src/data_prep.py
+    deps:
+      - data/raw/telco_churn.csv
+      - src/data_prep.py
+    outs:
+      - data/processed/train.csv
+      - data/processed/val.csv
+      - data/processed/test.csv
+    params:
+      - params.yaml:
+          - data
+
+  train:
+    cmd: python src/train.py
+    deps:
+      - data/processed/train.csv
+      - data/processed/val.csv
+      - src/train.py
+      - src/features.py
+      - src/evaluate.py
+    outs:
+      - models/preprocessor.joblib
+    params:
+      - params.yaml:
+          - model
+          - thresholds
+    metrics:
+      - metrics/eval_metrics.json:
+          cache: false
+
+  evaluate:
+    cmd: python src/evaluate.py
+    deps:
+      - data/processed/test.csv
+      - src/evaluate.py
+    metrics:
+      - metrics/test_metrics.json:
+          cache: false
+    plots:
+      - reports/roc_curve.json:
+          cache: false

@@ -1,0 +1,77 @@
+{
+  "f1": 0.4751,
+  "auc_roc": 0.5919,
+  "auc_pr": 0.298,
+  "precision": 0.3273,
+  "recall": 0.8663,
+  "fairness": {
+    "subgroups": {
+      "SeniorCitizen": {
+        "Senior": {
+          "selection_rate": 0.8534,
+          "recall_tpr": 0.9583,
+          "fpr": 0.7794,
+          "f1": 0.6259,
+          "count": 116
+        },
+        "Non-Senior": {
+          "selection_rate": 0.6735,
+          "recall_tpr": 0.8345,
+          "fpr": 0.6236,
+          "f1": 0.4336,
+          "count": 588
+        }
+      },
+      "Contract": {
+        "Month-to-month": {
+          "selection_rate": 0.8618,
+          "recall_tpr": 0.8916,
+          "fpr": 0.8405,
+          "f1": 0.5815,
+          "count": 398
+        },
+        "One year": {
+          "selection_rate": 0.4296,
+          "recall_tpr": 0.625,
+          "fpr": 0.4048,
+          "f1": 0.2597,
+          "count": 142
+        },
+        "Two year": {
+          "selection_rate": 0.5549,
+          "recall_tpr": 0.8,
+          "fpr": 0.5472,
+          "f1": 0.0833,
+          "count": 164
+        }
+      },
+      "TenureBucket": {
+        "New (0-12m)": {
+          "selection_rate": 0.7804,
+          "recall_tpr": 0.8515,
+          "fpr": 0.7168,
+          "f1": 0.6418,
+          "count": 214
+        },
+        "Mid (13-36m)": {
+          "selection_rate": 0.7805,
+          "recall_tpr": 0.9615,
+          "fpr": 0.719,
+          "f1": 0.4717,
+          "count": 205
+        },
+        "Long (>36m)": {
+          "selection_rate": 0.5895,
+          "recall_tpr": 0.7647,
+          "fpr": 0.5657,
+          "f1": 0.2574,
+          "count": 285
+        }
+      }
+    },
+    "demographic_parity_difference": 0.1799,
+    "equalized_odds_difference": 0.1558,
+    "four_fifths_selection_ratio": 0.7892,
+    "bias_status": "disparity_detected"
+  }
+}

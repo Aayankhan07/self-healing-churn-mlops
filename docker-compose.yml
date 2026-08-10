@@ -1,0 +1,53 @@
+services:
+  api:
+    build: .
+    ports: [ "8000:8000" ]
+    environment:
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - DATABASE_URL=sqlite:///./churnguard.db
+      - ENV=${ENV:-development}
+      - API_KEY=${API_KEY:-dev-key-change-in-prod}
+    volumes:
+      - ./reports:/app/reports
+      - ./churnguard.db:/app/churnguard.db
+    depends_on: [ mlflow ]
+
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:latest
+    ports: [ "5000:5000" ]
+    command: mlflow server --host 0.0.0.0 --backend-store-uri sqlite:///mlflow.db --default-artifact-root /mlruns
+    environment:
+      - MLFLOW_SERVER_ALLOWED_HOSTS=*
+    volumes:
+      - ./mlruns:/mlruns
+      - ./mlflow.db:/mlflow.db
+
+  dashboard:
+    build: .
+    ports: [ "8501:8501" ]
+    command: streamlit run dashboard/app.py --server.port 8501 --server.address 0.0.0.0
+    environment:
+      - API_URL=http://api:8000
+      - ENV=${ENV:-development}
+      - API_KEY=${API_KEY:-dev-key-change-in-prod}
+    depends_on: [ api ]
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: churnguard_prometheus
+    ports: [ "9090:9090" ]
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    depends_on: [ api ]
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: churnguard_grafana
+    ports: [ "3000:3000" ]
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources
+      - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards
+      - ./grafana/dashboards:/etc/grafana/provisioning/dashboards
+    depends_on: [ prometheus ]
