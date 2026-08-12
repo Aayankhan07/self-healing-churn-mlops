@@ -14,10 +14,15 @@ from api.schemas import PredictionOutput, ShapFactor
 from api.database import log_prediction
 
 
+# Retained for callers that predate per-domain risk bands; the authoritative
+# cutoffs now live on each DomainSpec.
 RISK_THRESHOLDS = {"low": 0.35, "high": 0.65}
 
 
-def assign_risk_tier(probability: float) -> str:
+def assign_risk_tier(probability: float, spec=None) -> str:
+    """Map a probability to its risk tier using the domain's bands."""
+    if spec is not None:
+        return spec.risk_bands.tier(probability)
     if probability >= RISK_THRESHOLDS["high"]:
         return "High"
     elif probability >= RISK_THRESHOLDS["low"]:
@@ -97,7 +102,9 @@ def run_single_prediction(
     else:
         proba = float(model.predict_proba(df)[0][1])
 
-    risk_tier = assign_risk_tier(proba)
+    from src.domains import get_domain_spec
+
+    risk_tier = assign_risk_tier(proba, get_domain_spec(domain_key))
     prediction = int(proba >= 0.5)
 
     # Shadow evaluation if a challenger model is active
