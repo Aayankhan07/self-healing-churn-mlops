@@ -14,7 +14,6 @@ import logging  # noqa: E402
 import mlflow.sklearn  # noqa: E402
 import pandas as pd  # noqa: E402
 import threading  # noqa: E402
-import difflib  # noqa: E402
 from contextlib import asynccontextmanager  # noqa: E402
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Header  # fmt: skip # noqa: E402
 from fastapi.responses import FileResponse  # noqa: E402
@@ -29,10 +28,12 @@ import hashlib  # noqa: E402
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-from api.schemas import CustomerInput, PredictionOutput, BatchOutput, HealthResponse, DriftStatusResponse, LaxBatchInput  # fmt: skip # noqa: E402
+from api.schemas import CustomerInput, PredictionOutput, BatchOutput, HealthResponse, DriftStatusResponse, LaxBatchInput, build_request_model  # fmt: skip # noqa: E402
 from api.predict import run_single_prediction  # noqa: E402
 from api.database import init_db, get_db, last_n_inputs, get_latest_drift, log_drift_report, log_self_healing_event, get_self_healing_logs  # fmt: skip # noqa: E402
 from src.monitor import generate_drift_report  # noqa: E402
+from src.domains import get_domain_spec  # noqa: E402
+from src.healing import heal  # noqa: E402
 
 START_TIME = time.time()
 
@@ -188,146 +189,16 @@ app = FastAPI(
 app.include_router(prometheus_router)
 
 
-def heal_customer_data(raw_data: dict) -> tuple[dict, list[str]]:
-    healed_data = raw_data.copy()
-    healed_actions = []
+def heal_customer_data(
+    raw_data: dict, domain_id: str = "telecom"
+) -> tuple[dict, list[str]]:
+    """
+    Repair a dirty inbound record against its domain's schema.
 
-    # Rules mapping
-    # 1. Numeric fields: negative or missing values clamped or imputed
-    # tenure: int
-    if "tenure" not in healed_data or healed_data["tenure"] is None:
-        healed_data["tenure"] = 0
-        healed_actions.append("Imputed missing tenure to 0")
-    elif not isinstance(healed_data["tenure"], (int, float)):
-        try:
-            healed_data["tenure"] = int(float(healed_data["tenure"]))
-            healed_actions.append("Coerced tenure to integer")
-        except Exception:
-            healed_data["tenure"] = 0
-            healed_actions.append("Imputed invalid tenure to 0")
-
-    if healed_data["tenure"] < 0:
-        healed_data["tenure"] = 0
-        healed_actions.append("Clamped negative tenure to 0")
-
-    # MonthlyCharges: float
-    if "MonthlyCharges" not in healed_data or healed_data["MonthlyCharges"] is None:
-        median_mc = 70.35
-        healed_data["MonthlyCharges"] = median_mc
-        healed_actions.append(f"Imputed missing MonthlyCharges to median ({median_mc})")
-    elif not isinstance(healed_data["MonthlyCharges"], (int, float)):
-        try:
-            healed_data["MonthlyCharges"] = float(healed_data["MonthlyCharges"])
-            healed_actions.append("Coerced MonthlyCharges to float")
-        except Exception:
-            median_mc = 70.35
-            healed_data["MonthlyCharges"] = median_mc
-            healed_actions.append(
-                f"Imputed invalid MonthlyCharges to median ({median_mc})"
-            )
-
-    if healed_data["MonthlyCharges"] <= 0:
-        healed_data["MonthlyCharges"] = 0.01
-        healed_actions.append("Clamped non-positive MonthlyCharges to 0.01")
-
-    # TotalCharges: float
-    if "TotalCharges" not in healed_data or healed_data["TotalCharges"] is None:
-        healed_data["TotalCharges"] = round(
-            healed_data["MonthlyCharges"] * max(1, healed_data["tenure"]), 2
-        )
-        healed_actions.append("Imputed missing TotalCharges as MonthlyCharges * tenure")
-    elif not isinstance(healed_data["TotalCharges"], (int, float)):
-        try:
-            healed_data["TotalCharges"] = float(healed_data["TotalCharges"])
-            healed_actions.append("Coerced TotalCharges to float")
-        except Exception:
-            healed_data["TotalCharges"] = round(
-                healed_data["MonthlyCharges"] * max(1, healed_data["tenure"]), 2
-            )
-            healed_actions.append(
-                "Imputed invalid TotalCharges as MonthlyCharges * tenure"
-            )
-
-    if healed_data["TotalCharges"] < 0:
-        healed_data["TotalCharges"] = 0.0
-        healed_actions.append("Clamped negative TotalCharges to 0.0")
-
-    # Constraint check: TotalCharges cannot be less than MonthlyCharges when tenure > 0
-    if (
-        healed_data["tenure"] > 0
-        and healed_data["TotalCharges"] < healed_data["MonthlyCharges"]
-    ):
-        healed_data["TotalCharges"] = round(
-            healed_data["MonthlyCharges"] * healed_data["tenure"], 2
-        )
-        healed_actions.append(
-            "Recomputed TotalCharges as MonthlyCharges * tenure due to constraint mismatch"
-        )
-
-    # 2. SeniorCitizen: normalize to 0 or 1
-    if "SeniorCitizen" not in healed_data or healed_data["SeniorCitizen"] is None:
-        healed_data["SeniorCitizen"] = 0
-        healed_actions.append("Imputed missing SeniorCitizen to 0")
-    else:
-        val = str(healed_data["SeniorCitizen"]).strip().lower()
-        if val in ("yes", "y", "true", "1", "1.0"):
-            healed_data["SeniorCitizen"] = 1
-            if val != "1":
-                healed_actions.append("Normalized SeniorCitizen to 1")
-        else:
-            healed_data["SeniorCitizen"] = 0
-            if val != "0":
-                healed_actions.append("Normalized SeniorCitizen to 0")
-
-    # 3. Categorical features string similarity dynamic mapping
-    CATEGORICAL_SCHEMAS = {
-        "gender": ["Male", "Female"],
-        "Partner": ["Yes", "No"],
-        "Dependents": ["Yes", "No"],
-        "PhoneService": ["Yes", "No"],
-        "MultipleLines": ["Yes", "No", "No phone service"],
-        "InternetService": ["DSL", "Fiber optic", "No"],
-        "OnlineSecurity": ["Yes", "No", "No internet service"],
-        "OnlineBackup": ["Yes", "No", "No internet service"],
-        "DeviceProtection": ["Yes", "No", "No internet service"],
-        "TechSupport": ["Yes", "No", "No internet service"],
-        "StreamingTV": ["Yes", "No", "No internet service"],
-        "StreamingMovies": ["Yes", "No", "No internet service"],
-        "Contract": ["Month-to-month", "One year", "Two year"],
-        "PaperlessBilling": ["Yes", "No"],
-        "PaymentMethod": [
-            "Electronic check",
-            "Mailed check",
-            "Bank transfer (automatic)",
-            "Credit card (automatic)",
-        ],
-    }
-
-    for col, valid_options in CATEGORICAL_SCHEMAS.items():
-        if col not in healed_data or healed_data[col] is None:
-            default_cat = valid_options[0]
-            healed_data[col] = default_cat
-            healed_actions.append(f"Imputed missing {col} to default '{default_cat}'")
-        else:
-            val = str(healed_data[col]).strip()
-            if val in valid_options:
-                healed_data[col] = val
-                continue
-
-            # String similarity lookup
-            matches = difflib.get_close_matches(val, valid_options, n=1, cutoff=0.6)
-            if matches:
-                closest = matches[0]
-                healed_data[col] = closest
-                healed_actions.append(f"Mapped typos in {col} ('{val}') to '{closest}'")
-            else:
-                default_cat = valid_options[0]
-                healed_data[col] = default_cat
-                healed_actions.append(
-                    f"Imputed unrecognized {col} ('{val}') to default '{default_cat}'"
-                )
-
-    return healed_data, healed_actions
+    The rules themselves live in src/domains/; this stays as the entry point the
+    routes call. Defaults to telecom so existing callers keep their behavior.
+    """
+    return heal(raw_data, get_domain_spec(domain_id))
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -429,12 +300,14 @@ def predict(customer: dict, domain: str = "telecom", db: Session = Depends(get_d
     if not app.state.model_loaded or app.state.model is None:
         raise HTTPException(status_code=503, detail="Model not loaded")
 
-    # Ingestion Self-Healing
-    healed_dict, healed_actions = heal_customer_data(customer)
+    spec = get_domain_spec(domain_val)
+
+    # Ingestion Self-Healing, against this domain's schema
+    healed_dict, healed_actions = heal(customer, spec)
 
     # Strict validation
     try:
-        validated_customer = CustomerInput(**healed_dict)
+        validated_customer = build_request_model(spec)(**healed_dict)
     except Exception as e:
         raise HTTPException(
             status_code=422, detail=f"Validation failed after healing: {str(e)}"
@@ -446,6 +319,7 @@ def predict(customer: dict, domain: str = "telecom", db: Session = Depends(get_d
             db,
             "data_quality",
             f"Healed prediction input for Customer {customer_id or 'N/A'}. Actions: {', '.join(healed_actions)}",
+            domain_id=spec.key,
         )
 
     result = run_single_prediction(
@@ -472,11 +346,14 @@ def predict_batch(
         raise HTTPException(status_code=503, detail="Model not loaded")
     t0 = time.time()
 
+    spec = get_domain_spec(domain)
+    request_model = build_request_model(spec)
+
     predictions = []
     for customer in batch.customers:
-        healed_dict, healed_actions = heal_customer_data(customer)
+        healed_dict, healed_actions = heal(customer, spec)
         try:
-            validated_customer = CustomerInput(**healed_dict)
+            validated_customer = request_model(**healed_dict)
         except Exception as e:
             raise HTTPException(
                 status_code=422,
@@ -489,6 +366,7 @@ def predict_batch(
                 db,
                 "data_quality",
                 f"Healed batch input for Customer {customer_id or 'N/A'}. Actions: {', '.join(healed_actions)}",
+                domain_id=spec.key,
             )
 
         pred = run_single_prediction(
@@ -746,15 +624,33 @@ def run_self_healing_retraining(app_ref, domain_id: str = "telecom"):
             db.close()
             return
 
-        # Load raw data to match customer IDs with true labels
-        raw_path = "data/raw/telco_churn.csv"
+        # Resolve ground-truth labels from this domain's own label source. A
+        # domain without one must not be retrained: every row would be a
+        # pseudo-label derived from the model's own output, which trains the
+        # model on its own opinions.
+        spec = get_domain_spec(domain_id)
+        raw_path = spec.label_source_path
+        if not raw_path:
+            log_self_healing_event(
+                db,
+                "retraining",
+                f"Auto-retraining aborted for domain '{domain_id}': no ground-truth "
+                f"label source is configured, so every label would be a pseudo-label.",
+                domain_id=domain_id,
+            )
+            app_ref.state.retraining_status = "idle"
+            db.close()
+            return
+
         raw_labels = {}
         if os.path.exists(raw_path):
             raw_df = pd.read_csv(raw_path)
-            if "customerID" in raw_df.columns and "Churn" in raw_df.columns:
-                raw_df["customerID"] = raw_df["customerID"].astype(str).str.strip()
+            id_col = spec.id_column
+            target = spec.target_column
+            if id_col in raw_df.columns and target in raw_df.columns:
+                raw_df[id_col] = raw_df[id_col].astype(str).str.strip()
                 raw_labels = (
-                    raw_df.set_index("customerID")["Churn"]
+                    raw_df.set_index(id_col)[target]
                     .map({"Yes": 1, "No": 0})
                     .to_dict()
                 )
@@ -773,7 +669,7 @@ def run_self_healing_retraining(app_ref, domain_id: str = "telecom"):
                 features = json.loads(r.features_json)
                 cust_id = str(r.customer_id).strip() if r.customer_id else None
 
-                features, db_healed_actions = heal_customer_data(features)
+                features, db_healed_actions = heal(features, spec)
                 if db_healed_actions:
                     log_self_healing_event(
                         db,
@@ -960,6 +856,12 @@ def bootstrap_domain_endpoint(payload: dict):
     )
 
     domain_key = bootstrap_custom_domain(domain_name)
+
+    # Bootstrapping writes the domain's baseline, which is what its spec is
+    # inferred from — drop any spec cached before that file existed.
+    from src.domains import reset_spec_cache
+
+    reset_spec_cache()
 
     d_model = load_domain_model(domain_key)
     d_prep = load_domain_preprocessor(domain_key)
