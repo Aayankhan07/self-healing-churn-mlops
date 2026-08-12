@@ -3,7 +3,7 @@ Pydantic v2 input/output schemas for all API endpoints.
 Strict validation — invalid inputs never reach the model.
 """
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import Optional, List, Literal
 from datetime import datetime
 
@@ -45,6 +45,38 @@ class CustomerInput(BaseModel):
                 "TotalCharges cannot be less than MonthlyCharges when tenure > 0"
             )
         return v
+
+
+class GenericCustomerInput(BaseModel):
+    """
+    Request model for domains that are not telecom.
+
+    Their fields come from the domain's own baseline data rather than the
+    telecom schema, so validation is permissive about extra keys and only
+    enforces what the domain's spec actually declares. Healing has already run
+    by the time a record reaches this model.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    customerID: Optional[str] = None
+
+    def model_dump(self, **kwargs):
+        # Keep the extras — they are the domain's real features.
+        kwargs.setdefault("exclude_none", False)
+        return super().model_dump(**kwargs)
+
+
+def build_request_model(spec) -> type[BaseModel]:
+    """
+    Return the Pydantic model that validates requests for `spec`.
+
+    Telecom keeps the hand-written CustomerInput so its OpenAPI schema and its
+    strict Literal validation are unchanged for existing clients.
+    """
+    if spec.key == "telecom":
+        return CustomerInput
+    return GenericCustomerInput
 
 
 class ShapFactor(BaseModel):
