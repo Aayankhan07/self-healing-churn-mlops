@@ -182,9 +182,7 @@ def test_drift_above_threshold_launches_retraining(clean_db, fake_app):
     assert any("Triggering automated retraining" in e for e in events)
 
 
-def test_drift_while_already_retraining_does_not_start_a_second_run(
-    clean_db, fake_app
-):
+def test_drift_while_already_retraining_does_not_start_a_second_run(clean_db, fake_app):
     _seed_predictions(clean_db, MIN_RECORDS + 5)
     fake_app.state.retraining_status = "running"
 

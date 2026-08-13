@@ -1,77 +1,77 @@
 {
-  "f1": 0.6339,
-  "auc_roc": 0.8311,
-  "auc_pr": 0.5868,
-  "precision": 0.5441,
-  "recall": 0.7594,
+  "f1": 0.63,
+  "auc_roc": 0.8208,
+  "auc_pr": 0.5746,
+  "precision": 0.5356,
+  "recall": 0.7647,
   "fairness": {
     "subgroups": {
       "SeniorCitizen": {
         "Senior": {
-          "selection_rate": 0.5862,
-          "recall_tpr": 0.8542,
+          "selection_rate": 0.6207,
+          "recall_tpr": 0.9375,
           "fpr": 0.3971,
-          "f1": 0.7069,
+          "f1": 0.75,
           "count": 116
         },
         "Non-Senior": {
-          "selection_rate": 0.3282,
-          "recall_tpr": 0.7266,
-          "fpr": 0.2049,
-          "f1": 0.6084,
+          "selection_rate": 0.3316,
+          "recall_tpr": 0.705,
+          "fpr": 0.216,
+          "f1": 0.5868,
           "count": 588
         }
       },
       "Contract": {
         "Month-to-month": {
           "selection_rate": 0.6407,
-          "recall_tpr": 0.8313,
-          "fpr": 0.5043,
-          "f1": 0.6556,
+          "recall_tpr": 0.8373,
+          "fpr": 0.5,
+          "f1": 0.6603,
           "count": 398
         },
         "One year": {
-          "selection_rate": 0.0423,
+          "selection_rate": 0.0704,
           "recall_tpr": 0.25,
-          "fpr": 0.0159,
-          "f1": 0.3636,
+          "fpr": 0.0476,
+          "f1": 0.3077,
           "count": 142
         },
         "Two year": {
-          "selection_rate": 0.0,
+          "selection_rate": 0.0122,
           "recall_tpr": 0.0,
-          "fpr": 0.0,
+          "fpr": 0.0126,
           "f1": 0.0,
           "count": 164
         }
       },
       "TenureBucket": {
         "New (0-12m)": {
-          "selection_rate": 0.729,
-          "recall_tpr": 0.901,
-          "fpr": 0.5752,
-          "f1": 0.7082,
+          "selection_rate": 0.7196,
+          "recall_tpr": 0.8713,
+          "fpr": 0.5841,
+          "f1": 0.6902,
           "count": 214
         },
         "Mid (13-36m)": {
           "selection_rate": 0.3659,
-          "recall_tpr": 0.7308,
-          "fpr": 0.2418,
-          "f1": 0.5984,
+          "recall_tpr": 0.7692,
+          "fpr": 0.2288,
+          "f1": 0.6299,
           "count": 205
         },
         "Long (>36m)": {
-          "selection_rate": 0.1053,
-          "recall_tpr": 0.3824,
-          "fpr": 0.0677,
-          "f1": 0.4062,
+          "selection_rate": 0.1333,
+          "recall_tpr": 0.4412,
+          "fpr": 0.0916,
+          "f1": 0.4167,
           "count": 285
         }
       }
     },
-    "demographic_parity_difference": 0.258,
-    "equalized_odds_difference": 0.1922,
-    "four_fifths_selection_ratio": 0.5599,
+    "demographic_parity_difference": 0.2891,
+    "equalized_odds_difference": 0.2325,
+    "four_fifths_selection_ratio": 0.5342,
     "bias_status": "disparity_detected"
   }
 }

@@ -162,9 +162,7 @@ def test_drift_status_is_scoped_by_domain(test_client, clean_drift_reports):
 # ── /drift/report ───────────────────────────────────────────
 
 
-def test_drift_report_generates_one_when_none_exists(
-    test_client, clean_drift_reports
-):
+def test_drift_report_generates_one_when_none_exists(test_client, clean_drift_reports):
     r = test_client.get("/drift/report?domain=telecom")
     assert r.status_code == 200
     assert "text/html" in r.headers["content-type"]
@@ -189,9 +187,7 @@ def test_drift_report_regenerates_when_the_file_is_gone(
     assert "text/html" in r.headers["content-type"]
 
 
-def test_drift_report_serves_a_real_report(
-    test_client, clean_drift_reports, tmp_path
-):
+def test_drift_report_serves_a_real_report(test_client, clean_drift_reports, tmp_path):
     report = tmp_path / "real_report.html"
     report.write_text(
         "<html><head><title>Evidently</title></head>"

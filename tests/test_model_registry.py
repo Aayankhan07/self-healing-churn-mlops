@@ -62,9 +62,7 @@ def test_register_replaces_an_existing_entry(app):
 def test_register_challenger_leaves_the_champion_serving(app):
     champion, challenger = MagicMock(), MagicMock()
     model_registry.register(app, "telecom", champion, MagicMock(), "v1")
-    model_registry.register_challenger(
-        app, "telecom", challenger, MagicMock(), "v2"
-    )
+    model_registry.register_challenger(app, "telecom", challenger, MagicMock(), "v2")
 
     container = model_registry.get_container(app, "telecom")
     assert container["model"] is champion, "champion must keep serving"
@@ -80,9 +78,7 @@ def test_register_challenger_for_an_unseen_domain(app):
 def test_promote_swaps_challenger_into_champion(app):
     champion, challenger = MagicMock(), MagicMock()
     model_registry.register(app, "telecom", champion, MagicMock(), "v1")
-    model_registry.register_challenger(
-        app, "telecom", challenger, MagicMock(), "v2"
-    )
+    model_registry.register_challenger(app, "telecom", challenger, MagicMock(), "v2")
 
     promoted = model_registry.promote_challenger(app, "telecom")
 
@@ -212,10 +208,12 @@ def test_missing_reference_data_is_tolerated(tmp_path):
 
 
 def test_unreadable_reference_data_is_tolerated(tmp_path):
-    """A file pandas cannot parse degrades to no baseline, not a crash."""
-    bad = tmp_path / "bad.csv"
-    bad.write_text("a,b\n1,2,3,4,5\n")  # ragged rows: a genuine parser error
-    assert model_registry._load_reference_data(str(bad)) is None
+    """A read failure degrades to no baseline rather than killing startup."""
+    path = tmp_path / "locked.csv"
+    path.write_text("tenure\n1\n")
+
+    with patch("pandas.read_csv", side_effect=PermissionError("file is locked")):
+        assert model_registry._load_reference_data(str(path)) is None
 
 
 def test_reference_data_drops_the_target_column(tmp_path):
