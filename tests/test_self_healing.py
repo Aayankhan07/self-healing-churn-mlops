@@ -90,10 +90,30 @@ def test_self_healing_logs_endpoint(test_client):
     assert isinstance(r.json(), list)
 
 
-def test_database_self_healing_before_retraining(monkeypatch):
+def test_database_self_healing_before_retraining(monkeypatch, tmp_path):
     from unittest.mock import MagicMock, patch
+    import pandas as pd
     from api.database import log_prediction, get_self_healing_logs
     from api.main import run_self_healing_retraining
+
+    # Retraining refuses to run for a domain with no ground-truth labels — it
+    # would otherwise train the model on its own predictions. The real telecom
+    # label file is gitignored, so supply one to reach the training step.
+    label_source = tmp_path / "labels.csv"
+    pd.DataFrame(
+        {"customerID": ["7590-VHVEG", "other-1"], "Churn": ["Yes", "No"]}
+    ).to_csv(label_source, index=False)
+
+    from dataclasses import replace
+
+    from src.domains import get_domain_spec as real_get_spec
+
+    def spec_with_labels(domain_id):
+        return replace(real_get_spec(domain_id), label_source_path=str(label_source))
+
+    monkeypatch.setattr(
+        "api.services.retrain_service.get_domain_spec", spec_with_labels
+    )
 
     # 1. Create a clean database session
     db = SessionLocal()

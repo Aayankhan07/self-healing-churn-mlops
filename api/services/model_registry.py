@@ -17,6 +17,9 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_DOMAINS = ["telecom", "school", "ecommerce", "fitness"]
 
+# Produced by the DVC pipeline; absent on a fresh checkout.
+REFERENCE_DATA_PATH = "data/processed/train.csv"
+
 
 def initialize(app) -> None:
     """Load every default domain's artifacts into the registry."""
@@ -48,9 +51,27 @@ def initialize(app) -> None:
     app.state.model_version = telecom["version"]
     app.state.model_loaded = telecom["model"] is not None
 
-    app.state.reference_data = pd.read_csv("data/processed/train.csv").drop(
-        columns=["Churn"], errors="ignore"
-    )
+    # Reference data feeds drift comparison. It is produced by the DVC pipeline,
+    # so it is legitimately absent on a fresh checkout or before the first
+    # training run — degrade to "no drift baseline" rather than refusing to
+    # start. Every domain also carries its own baseline under data/baselines/,
+    # which is what drift actually compares against.
+    app.state.reference_data = _load_reference_data(REFERENCE_DATA_PATH)
+
+
+def _load_reference_data(path: str):
+    if not Path(path).exists():
+        logger.warning(
+            "Reference data %s not found; drift comparison will fall back to "
+            "each domain's baseline until the training pipeline has run.",
+            path,
+        )
+        return None
+    try:
+        return pd.read_csv(path).drop(columns=["Churn"], errors="ignore")
+    except Exception as exc:
+        logger.warning("Could not read reference data %s: %s", path, exc)
+        return None
 
 
 def get_container(app, domain_key: str):
