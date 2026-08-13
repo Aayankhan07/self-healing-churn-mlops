@@ -9,6 +9,7 @@ import threading
 from io import StringIO
 
 import api.main as main
+from api.services import model_registry
 
 
 def test_only_one_thread_claims_the_retraining_slot():
@@ -24,7 +25,7 @@ def test_only_one_thread_claims_the_retraining_slot():
 
     def worker():
         barrier.wait()  # maximize overlap on the check-and-set
-        claims.append(main._claim_retraining_slot())
+        claims.append(model_registry.claim_retraining_slot(main.app))
 
     threads = [threading.Thread(target=worker) for _ in range(8)]
     for t in threads:
@@ -42,7 +43,7 @@ def test_claim_is_refused_while_running():
     main.app.state.model_lock = threading.Lock()
     main.app.state.retraining_status = "running"
     try:
-        assert main._claim_retraining_slot() is False
+        assert model_registry.claim_retraining_slot(main.app) is False
     finally:
         main.app.state.retraining_status = "idle"
 

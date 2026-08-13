@@ -57,9 +57,10 @@ def test_production_requires_every_role_key():
 def test_production_boots_with_all_keys():
     result = _run(
         """
-        import api.main as m
-        assert m.IS_PRODUCTION is True
-        assert len(m.HASHED_API_KEY_SCOPES) == 3
+        import api.main  # the app must import cleanly under production config
+        import api.security as sec
+        assert sec.IS_PRODUCTION is True
+        assert len(sec.HASHED_API_KEY_SCOPES) == 3
         print("ok")
         """,
         PROD_ENV,
