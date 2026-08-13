@@ -23,10 +23,12 @@ dependencies = [
     "evidently==0.4.30",
     # MLflow
     "mlflow==2.13.0",
-    # mlflow 2.13 imports pkg_resources, which ships with setuptools. Python
-    # 3.12 no longer installs setuptools into a fresh environment, so it has to
-    # be declared explicitly or `import mlflow` fails with ModuleNotFoundError.
-    "setuptools>=68",
+    # mlflow 2.13 imports pkg_resources, which is bundled with setuptools.
+    # Python 3.12 stopped installing setuptools into fresh environments, so it
+    # must be declared. The upper bound matters just as much: setuptools 84
+    # removed pkg_resources entirely, so an unpinned install resolves to a
+    # version where `import mlflow` still fails with ModuleNotFoundError.
+    "setuptools>=68,<81",
     # API
     "fastapi==0.111.0",
     "uvicorn[standard]==0.29.0",
