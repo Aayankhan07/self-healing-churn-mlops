@@ -5,9 +5,10 @@ SQLAlchemy + SQLite setup. Lightweight — no external DB needed.
 from sqlalchemy import create_engine, Column, String, Float, Integer, DateTime
 from sqlalchemy.orm import declarative_base, sessionmaker
 from datetime import datetime, timedelta
-import os
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./churnguard.db")
+from api.config import settings
+
+DATABASE_URL = settings.database_url
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
@@ -60,20 +61,19 @@ class ShadowPredictionLog(Base):
 
 
 def init_db():
-    Base.metadata.create_all(bind=engine)
-    from sqlalchemy import text
+    """
+    Ensure the schema exists.
 
-    with engine.connect() as conn:
-        for tbl in ["predictions", "self_healing_logs", "drift_reports"]:
-            try:
-                conn.execute(
-                    text(
-                        f"ALTER TABLE {tbl} ADD COLUMN domain_id VARCHAR DEFAULT 'telecom'"
-                    )
-                )
-                conn.commit()
-            except Exception:
-                pass
+    Creates any missing tables from the ORM metadata, which is what makes a
+    fresh checkout and the test suite work without running migrations first.
+
+    Schema *changes* belong in alembic/versions/, not here. This function used
+    to bolt on the domain_id columns with a hand-rolled ALTER TABLE wrapped in
+    a bare `except: pass`, which meant the migration history never described
+    the schema the application actually used — and a deploy that ran
+    `alembic upgrade head` alone got an incomplete database.
+    """
+    Base.metadata.create_all(bind=engine)
 
 
 def get_db():

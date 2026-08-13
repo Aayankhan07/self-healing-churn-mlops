@@ -11,11 +11,17 @@ from pathlib import Path
 import pandas as pd
 import json
 
+# scripts/ is not part of the installed package — CI invokes this file by path,
+# so the project root has to be added explicitly.
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from src.domain_registry import load_domain_model, sanitize_domain_id, get_domain_model_dir
-from src.features import engineer_features
-from src.evaluate import compute_metrics
+from src.domain_registry import (  # noqa: E402
+    load_domain_model,
+    sanitize_domain_id,
+    get_domain_model_dir,
+)
+from src.features import engineer_features  # noqa: E402
+from src.evaluate import compute_metrics  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("ChallengerEvalGate")

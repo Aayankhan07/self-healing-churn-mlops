@@ -2,7 +2,6 @@
 Evaluation utilities. Used in training and CI/CD performance gate.
 """
 
-import sys
 import numpy as np
 import pandas as pd
 import shap
@@ -19,9 +18,7 @@ from sklearn.metrics import (
 )
 from typing import List, Dict, Any
 
-sys.path.append(str(Path(__file__).resolve().parents[1]))
-
-from src.features import engineer_features  # noqa: E402
+from src.features import engineer_features
 
 
 def compute_fairness_metrics(

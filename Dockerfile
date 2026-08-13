@@ -14,16 +14,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy and install python dependencies
-COPY requirements.txt /app/
-RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir -r requirements.txt
-
-# Copy configuration, source code, and API folders
-COPY params.yaml /app/
+# Install runtime dependencies first, in their own layer, so editing source
+# does not invalidate the dependency cache.
+COPY pyproject.toml README.md /app/
 COPY src/ /app/src/
 COPY api/ /app/api/
 COPY dashboard/ /app/dashboard/
+
+# Installs the runtime dependencies from pyproject.toml and puts api/, src/,
+# and dashboard/ on the path. The dev extra (pytest, black, flake8) is
+# deliberately not installed — it has no business in a production image.
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir .
+
+# Configuration and pre-trained artifacts
+COPY params.yaml /app/
 COPY models/ /app/models/
 
 # Copy data folder if it exists locally (so pre-trained model is included)

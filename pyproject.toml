@@ -1,0 +1,79 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "churnguard"
+version = "1.0.0"
+description = "Self-healing MLOps churn prediction platform"
+readme = "README.md"
+requires-python = ">=3.10"
+
+# Runtime dependencies only. Anything needed solely to develop or test the
+# project belongs in the dev extra below, so it never ships in the image.
+dependencies = [
+    # Data
+    "pandas==2.2.2",
+    "numpy==1.26.4",
+    "scikit-learn==1.4.2",
+    "xgboost==2.0.3",
+    "imbalanced-learn==0.12.2",
+    "optuna==3.6.1",
+    "shap==0.45.1",
+    "evidently==0.4.30",
+    # MLflow
+    "mlflow==2.13.0",
+    # API
+    "fastapi==0.111.0",
+    "uvicorn[standard]==0.29.0",
+    "pydantic>=2.7.1",
+    "python-multipart==0.0.9",
+    "sqlalchemy==2.0.30",
+    "alembic==1.13.1",
+    # Dashboard
+    "streamlit==1.35.0",
+    "plotly==5.22.0",
+    "requests>=2.31.0",
+    # Utils
+    "joblib==1.4.2",
+    "pyyaml==6.0.1",
+    "python-dotenv==1.0.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==8.2.2",
+    "pytest-cov==5.0.0",
+    "black==24.4.2",
+    "flake8==7.0.0",
+    "httpx>=0.23.0,<0.28.0",
+]
+
+[tool.setuptools]
+# Flat layout, not a src/ layout: `src` here is the ML pipeline package itself,
+# not a container for other packages. Listing packages explicitly (and omitting
+# package-dir) keeps tools from mistaking src/ for the import root.
+packages = [
+    "api",
+    "api.routers",
+    "api.services",
+    "src",
+    "src.domains",
+    "dashboard",
+    "dashboard.views",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Installing the project (`pip install -e .`) is what puts api/, src/, and
+# dashboard/ on the path. rootdir is added as a fallback so the suite still
+# runs in a bare checkout.
+pythonpath = ["."]
+
+[tool.black]
+line-length = 88
+target-version = ["py310"]
+
+[tool.coverage.run]
+source = ["api", "src"]
+omit = ["tests/*", "*/__pycache__/*"]

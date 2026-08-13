@@ -40,7 +40,6 @@ def run_self_healing_retraining(app_ref, domain_id: str = "telecom"):
     )
 
     domain_id = sanitize_domain_id(domain_id)
-    os.environ["TARGET_DOMAIN"] = domain_id
 
     db = SessionLocal()
     try:
@@ -166,7 +165,6 @@ def run_self_healing_retraining(app_ref, domain_id: str = "telecom"):
             [original_train_df, new_prod_df], ignore_index=True
         )
         combined_train_df.to_csv(combined_path, index=False)
-        os.environ["TRAIN_DATA_PATH"] = combined_path
 
         with open("params.yaml") as f:
             params = yaml.safe_load(f)
@@ -178,7 +176,12 @@ def run_self_healing_retraining(app_ref, domain_id: str = "telecom"):
             domain_id=domain_id,
         )
 
-        run_training_pipeline(params)
+        # Passed explicitly: this runs in a background thread, so routing them
+        # through os.environ would let concurrent retrains of different domains
+        # overwrite each other's target and training data.
+        run_training_pipeline(
+            params, domain_id=domain_id, train_data_path=combined_path
+        )
 
         if os.path.exists(combined_path):
             os.remove(combined_path)

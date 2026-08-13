@@ -7,11 +7,11 @@ retraining service.
 """
 
 import logging
-import os
 import threading
 
 import pandas as pd
 
+from api.config import settings
 from api.database import last_n_inputs, log_drift_report, log_self_healing_event
 from api.services import model_registry
 from api.services.retrain_service import run_self_healing_retraining
@@ -31,7 +31,7 @@ def run_drift_check(app, domain_id: str = "telecom"):
     db = SessionLocal()
     try:
         # 1. Fetch drift threshold from env
-        drift_threshold = float(os.getenv("DRIFT_THRESHOLD", "0.20"))
+        drift_threshold = settings.drift_threshold
 
         # 2. Get the last N inputs from database, scoped to this domain
         records = last_n_inputs(db, n=500, domain_id=domain_id)

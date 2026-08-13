@@ -6,16 +6,11 @@ live in dashboard/pages/. Talks to the API only through dashboard.api_client —
 no direct DB access.
 """
 
-import sys
-from pathlib import Path
+import streamlit as st
 
-sys.path.append(str(Path(__file__).resolve().parents[1]))
-
-import streamlit as st  # noqa: E402
-
-from dashboard import api_client, domains, styles  # noqa: E402
-from dashboard.views import customers, model_health, overview  # noqa: E402
-from dashboard.views import self_healing, upload  # noqa: E402
+from dashboard import api_client, domains, styles
+from dashboard.views import customers, model_health, overview
+from dashboard.views import self_healing, upload
 
 st.set_page_config(
     page_title="ChurnGuard — Customer Churn Platform",

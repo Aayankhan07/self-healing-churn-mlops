@@ -13,12 +13,8 @@ from pathlib import Path
 from xgboost import XGBClassifier
 from imblearn.over_sampling import SMOTE
 from imblearn.pipeline import Pipeline as ImbPipeline
-import sys
-
-sys.path.append(str(Path(__file__).resolve().parents[1]))
-
-from src.features import engineer_features, build_preprocessor, save_preprocessor  # fmt: skip # noqa: E402
-from src.evaluate import compute_metrics  # fmt: skip # noqa: E402
+from src.features import engineer_features, build_preprocessor, save_preprocessor
+from src.evaluate import compute_metrics
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -35,7 +31,18 @@ def load_split(path: str, target: str = "Churn"):
     return df.drop(columns=[target]), df[target]
 
 
-def train(params: dict):
+def train(params: dict, domain_id: str = None, train_data_path: str = None):
+    """
+    Train a model for `domain_id` from `train_data_path`.
+
+    Both are explicit parameters rather than environment variables. The
+    self-healing retrainer runs in a background thread, and it used to pass
+    them by assigning to os.environ — process-global state, so two retrains of
+    different domains could overwrite each other's target mid-run.
+
+    They still fall back to the environment so DVC stages and manual runs that
+    set TARGET_DOMAIN / TRAIN_DATA_PATH keep working.
+    """
     import os
 
     tracking_uri = os.getenv("MLFLOW_TRACKING_URI") or params.get("mlflow_uri")
@@ -51,7 +58,9 @@ def train(params: dict):
     mlflow.set_tracking_uri(tracking_uri)
     mlflow.set_experiment("churnguard-churn-prediction")
 
-    train_path = os.getenv("TRAIN_DATA_PATH", "data/processed/train.csv")
+    train_path = train_data_path or os.getenv(
+        "TRAIN_DATA_PATH", "data/processed/train.csv"
+    )
     X_train_raw, y_train = load_split(train_path)
     X_val_raw, y_val = load_split("data/processed/val.csv")
 
@@ -112,7 +121,7 @@ def train(params: dict):
         logger.info(f"Val metrics: {metrics}")
 
         # Save preprocessor separately for inference (needed for SHAP)
-        domain_id = os.getenv("TARGET_DOMAIN", "telecom")
+        domain_id = domain_id or os.getenv("TARGET_DOMAIN", "telecom")
         from src.domain_registry import get_domain_model_dir
 
         out_dir = get_domain_model_dir(domain_id)

@@ -1,14 +1,10 @@
 """Shared fixtures for all test files."""
 
-import sys
-from pathlib import Path
+import pytest
+import pandas as pd
+from fastapi.testclient import TestClient
 
-sys.path.append(str(Path(__file__).resolve().parents[1]))
-
-import pytest  # noqa: E402
-import pandas as pd  # noqa: E402
-from fastapi.testclient import TestClient  # noqa: E402
-from api.main import app  # noqa: E402
+from api.main import app
 
 
 @pytest.fixture(scope="session")

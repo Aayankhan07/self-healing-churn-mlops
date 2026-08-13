@@ -17,6 +17,8 @@ def send_slack_alert(
     """
     Send Webhook notification to Slack / External Webhook URL if configured via SLACK_WEBHOOK_URL.
     """
+    # Read directly rather than via api.config: src/ is the ML pipeline and
+    # must not depend on the API package. Same variable, same default.
     webhook_url = os.getenv("SLACK_WEBHOOK_URL", "")
 
     payload = {

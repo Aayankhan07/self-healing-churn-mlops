@@ -9,10 +9,12 @@ import sys
 import os
 from pathlib import Path
 
-# Add project root to sys.path
+# Alembic runs this file as a script from its own directory, not as part of the
+# installed package, so the project root has to go on the path explicitly even
+# though `pip install -e .` covers every other entry point.
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from api.database import Base
+from api.database import Base  # noqa: E402
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -23,9 +25,20 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# Override database url with environment variable or default
-database_url = os.getenv("DATABASE_URL", "sqlite:///./churnguard.db")
-config.set_main_option("sqlalchemy.url", database_url)
+# Resolve the database URL, in precedence order:
+#   1. one set programmatically on the Config (tests, tooling)
+#   2. DATABASE_URL from the environment (deploys)
+#   3. the local development default
+# Checking the Config first matters: overwriting it unconditionally meant a
+# caller that passed an explicit URL silently migrated whatever DATABASE_URL
+# happened to point at instead.
+configured_url = config.get_main_option("sqlalchemy.url", None)
+PLACEHOLDER_URL = "driver://user:pass@localhost/dbname"
+
+if not configured_url or configured_url == PLACEHOLDER_URL:
+    configured_url = os.getenv("DATABASE_URL", "sqlite:///./churnguard.db")
+
+config.set_main_option("sqlalchemy.url", configured_url)
 
 # add your model's MetaData object here
 # for 'autogenerate' support
