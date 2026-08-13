@@ -156,6 +156,14 @@ def generate_drift_report(
 
     ignore_cols = ["customerID", "studentID", "id", "prediction_id", "Churn"]
     reference_data = reference_data.drop(columns=ignore_cols, errors="ignore")
+
+    # /drift/report calls this with current_data=None to regenerate a report on
+    # demand, before any traffic has been scored. Comparing the baseline
+    # against itself is the honest answer there: no observed drift, rather than
+    # a crash or a fabricated score.
+    if current_data is None:
+        current_data = reference_data.copy()
+
     current_data = current_data.drop(columns=ignore_cols, errors="ignore")
 
     column_mapping = ColumnMapping(target=None, prediction=None)
