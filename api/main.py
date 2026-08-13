@@ -28,7 +28,7 @@ import hashlib  # noqa: E402
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-from api.schemas import CustomerInput, PredictionOutput, BatchOutput, HealthResponse, DriftStatusResponse, LaxBatchInput, build_request_model  # fmt: skip # noqa: E402
+from api.schemas import CustomerInput, PredictionOutput, BatchOutput, HealthResponse, DriftStatusResponse, LaxBatchInput, build_request_model, unknown_fields  # fmt: skip # noqa: E402
 from api.predict import run_single_prediction  # noqa: E402
 from api.database import init_db, get_db, last_n_inputs, get_latest_drift, log_drift_report, log_self_healing_event, get_self_healing_logs  # fmt: skip # noqa: E402
 from src.monitor import generate_drift_report  # noqa: E402
@@ -218,6 +218,7 @@ def health(domain: str = "telecom"):
         model_loaded=is_loaded,
         model_version=version,
         uptime_seconds=round(time.time() - START_TIME, 1),
+        demo_fixture=get_domain_spec(domain_key).is_demo_fixture,
     )
 
 
@@ -319,6 +320,17 @@ def predict(customer: dict, domain: str = "telecom", db: Session = Depends(get_d
             db,
             "data_quality",
             f"Healed prediction input for Customer {customer_id or 'N/A'}. Actions: {', '.join(healed_actions)}",
+            domain_id=spec.key,
+        )
+
+    unexpected = unknown_fields(customer, spec)
+    if unexpected:
+        log_self_healing_event(
+            db,
+            "data_quality",
+            f"Prediction input for Customer {customer_id or 'N/A'} carried fields "
+            f"not declared by domain '{spec.key}': {', '.join(unexpected)}. "
+            f"They were accepted but not used for scoring.",
             domain_id=spec.key,
         )
 
@@ -650,9 +662,7 @@ def run_self_healing_retraining(app_ref, domain_id: str = "telecom"):
             if id_col in raw_df.columns and target in raw_df.columns:
                 raw_df[id_col] = raw_df[id_col].astype(str).str.strip()
                 raw_labels = (
-                    raw_df.set_index(id_col)[target]
-                    .map({"Yes": 1, "No": 0})
-                    .to_dict()
+                    raw_df.set_index(id_col)[target].map({"Yes": 1, "No": 0}).to_dict()
                 )
 
         # Reconstruct DataFrame with labels

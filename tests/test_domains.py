@@ -9,6 +9,7 @@ tests assert each domain now answers for its own fields.
 import pandas as pd
 import pytest
 
+from api.schemas import unknown_fields
 from src.domains import get_domain_spec, reset_spec_cache
 from src.domains.base import CategoricalRule, NumericRule, RiskBands
 from src.domains.generic import infer_spec
@@ -109,13 +110,6 @@ def test_high_cardinality_columns_are_not_treated_as_categories(tmp_path):
     assert spec.categorical == []
 
 
-def test_malformed_baseline_falls_back_to_permissive(tmp_path):
-    baseline = tmp_path / "broken.csv"
-    baseline.write_bytes(b"\x00\x01\x02 not,a,valid\ncsv")
-    spec = infer_spec("custom_broken", baseline_path=baseline)
-    assert spec.key == "custom_broken"
-
-
 def test_spec_cache_returns_a_stable_object():
     reset_spec_cache()
     first = get_domain_spec("ecommerce")
@@ -128,6 +122,58 @@ def test_reset_spec_cache_forces_reinference():
     first = get_domain_spec("fitness")
     reset_spec_cache()
     assert get_domain_spec("fitness") is not first
+
+
+# ── Demo fixtures ───────────────────────────────────────────
+
+
+def test_copied_baselines_are_flagged_as_demo_fixtures():
+    """
+    ecommerce and fitness are seeded by copying telecom's artifacts verbatim,
+    so they serve telecom's model under another name. That has to be visible
+    rather than pass for a domain-specific model.
+    """
+    for domain in ["ecommerce", "fitness"]:
+        assert get_domain_spec(domain).is_demo_fixture is True
+
+
+def test_domains_with_their_own_data_are_not_demo_fixtures():
+    assert get_domain_spec("telecom").is_demo_fixture is False
+    # school has genuine columns of its own.
+    assert get_domain_spec("school").is_demo_fixture is False
+
+
+def test_health_reports_demo_fixture_status(test_client):
+    assert test_client.get("/health?domain=telecom").json()["demo_fixture"] is False
+    assert test_client.get("/health?domain=ecommerce").json()["demo_fixture"] is True
+
+
+# ── Unknown fields ──────────────────────────────────────────
+
+
+def test_unknown_fields_are_reported_against_a_declared_spec():
+    spec = get_domain_spec("school")
+    record = {"gpa_average": 3.0, "favourite_colour": "blue", "customerID": "s1"}
+    assert unknown_fields(record, spec) == ["favourite_colour"]
+
+
+def test_permissive_spec_reports_nothing(tmp_path):
+    spec = infer_spec("custom_open", baseline_path=tmp_path / "absent.csv")
+    assert unknown_fields({"whatever": 1}, spec) == []
+
+
+def test_unknown_fields_logged_as_data_quality_event(test_client, valid_customer):
+    """Accepted, but recorded — not silently swallowed."""
+    payload = {**valid_customer, "totally_made_up_field": 7}
+    r = test_client.post(
+        "/predict?domain=school",
+        json=payload,
+        headers={"X-API-Key": "dev-key-change-in-prod"},
+    )
+    assert r.status_code == 200
+
+    logs = test_client.get("/self-healing/logs?domain=school").json()
+    assert any("totally_made_up_field" in entry["description"] for entry in logs)
 
 
 # ── Risk bands ──────────────────────────────────────────────

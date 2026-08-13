@@ -79,6 +79,22 @@ def build_request_model(spec) -> type[BaseModel]:
     return GenericCustomerInput
 
 
+def unknown_fields(record: dict, spec) -> List[str]:
+    """
+    Fields the caller sent that this domain's spec does not declare.
+
+    They are accepted — a domain's baseline rarely covers every column its
+    callers send — but reported as a data-quality event. Silently swallowing
+    unrecognized fields is how the telecom-only schema went unnoticed for so
+    long: a school request full of unknown keys still scored happily.
+    """
+    if not spec.field_names:
+        # A permissive spec declares nothing, so nothing can be unexpected.
+        return []
+    known = set(spec.field_names) | {spec.id_column, spec.target_column, "domain"}
+    return sorted(key for key in record if key not in known)
+
+
 class ShapFactor(BaseModel):
     feature: str
     value: str
@@ -122,6 +138,9 @@ class HealthResponse(BaseModel):
     model_loaded: bool
     model_version: str
     uptime_seconds: float
+    # True when this domain serves artifacts copied from another domain rather
+    # than a model trained on its own data.
+    demo_fixture: bool = False
 
 
 class MetricsResponse(BaseModel):

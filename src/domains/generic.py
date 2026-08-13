@@ -18,11 +18,14 @@ as "accept the record as-is": permissive, but never silently telecom.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from pathlib import Path
 from typing import Optional
 
 import pandas as pd
+
+from src.domain_registry import BASELINES_DIR
 
 from .base import CategoricalRule, DomainSpec, NumericRule, RiskBands
 
@@ -62,6 +65,28 @@ def _numeric_rule(column: str, series: pd.Series) -> NumericRule:
     )
 
 
+def _is_copy_of_telecom_baseline(baseline_path: Path) -> bool:
+    """
+    True when a domain's baseline is a byte-identical copy of telecom's.
+
+    ensure_domain_initialized() seeds a new domain by copying the telecom
+    artifacts, so a domain that was never given real data still answers every
+    request — with telecom's model, under its own name. Detecting the copy is
+    what lets the platform say so out loud.
+    """
+    telecom_baseline = Path(BASELINES_DIR) / "telecom_baseline.csv"
+    if not telecom_baseline.exists() or not baseline_path.exists():
+        return False
+    if baseline_path.resolve() == telecom_baseline.resolve():
+        return False
+    if baseline_path.stat().st_size != telecom_baseline.stat().st_size:
+        return False
+    return (
+        hashlib.sha256(baseline_path.read_bytes()).digest()
+        == hashlib.sha256(telecom_baseline.read_bytes()).digest()
+    )
+
+
 def infer_spec(
     domain_key: str,
     display_name: Optional[str] = None,
@@ -70,8 +95,17 @@ def infer_spec(
     """Build a DomainSpec for `domain_key` from its baseline data."""
     numeric = []
     categorical = []
+    is_demo_fixture = False
 
     if baseline_path is not None and Path(baseline_path).exists():
+        is_demo_fixture = _is_copy_of_telecom_baseline(Path(baseline_path))
+        if is_demo_fixture:
+            logger.warning(
+                "Domain '%s' has a baseline copied verbatim from telecom; it is "
+                "serving telecom's model under another name, not a model trained "
+                "on its own data",
+                domain_key,
+            )
         try:
             frame = pd.read_csv(baseline_path)
         except Exception as exc:  # a malformed baseline must not break serving
@@ -113,4 +147,5 @@ def infer_spec(
         # refuse rather than invent labels for it.
         label_source_path=None,
         feature_engineering=None,
+        is_demo_fixture=is_demo_fixture,
     )

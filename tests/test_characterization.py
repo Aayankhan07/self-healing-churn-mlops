@@ -24,12 +24,16 @@ ENGINEER_HEADERS = {"X-API-Key": "engineer-key"}
 
 def test_health_shape(test_client):
     body = test_client.get("/health").json()
+    # `demo_fixture` was added in Phase 2: a domain serving artifacts copied
+    # from telecom now says so instead of passing as a trained model.
     assert set(body) == {
         "status",
         "model_loaded",
         "model_version",
         "uptime_seconds",
+        "demo_fixture",
     }
+    assert isinstance(body["demo_fixture"], bool)
     assert body["status"] in ("healthy", "degraded")
     assert isinstance(body["model_loaded"], bool)
     assert isinstance(body["model_version"], str)

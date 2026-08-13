@@ -98,9 +98,7 @@ class BinaryRule:
     """
 
     name: str
-    truthy: List[str] = field(
-        default_factory=lambda: ["yes", "y", "true", "1", "1.0"]
-    )
+    truthy: List[str] = field(default_factory=lambda: ["yes", "y", "true", "1", "1.0"])
     canonical: List[str] = field(default_factory=lambda: ["0", "1"])
 
 
@@ -152,6 +150,11 @@ class DomainSpec:
     # labelled history, which callers must treat as "do not retrain".
     label_source_path: Optional[str] = None
     feature_engineering: Optional[Callable[[pd.DataFrame], pd.DataFrame]] = None
+    # True when the domain's artifacts are copies of another domain's rather
+    # than trained on its own data. Such a domain serves predictions, but they
+    # carry no domain-specific signal — surface it rather than let a demo be
+    # mistaken for a trained model.
+    is_demo_fixture: bool = False
 
     @property
     def field_names(self) -> List[str]:

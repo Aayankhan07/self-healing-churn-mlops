@@ -24,9 +24,7 @@ from src.domains.base import (
 )
 
 
-def _heal_numeric(
-    rule: NumericRule, row: Dict[str, Any], actions: List[str]
-) -> None:
+def _heal_numeric(rule: NumericRule, row: Dict[str, Any], actions: List[str]) -> None:
     missing = rule.name not in row or row[rule.name] is None
 
     if missing:
@@ -77,9 +75,7 @@ def _heal_categorical(
 ) -> None:
     if rule.name not in row or row[rule.name] is None:
         row[rule.name] = rule.fallback
-        actions.append(
-            f"Imputed missing {rule.name} to default '{rule.fallback}'"
-        )
+        actions.append(f"Imputed missing {rule.name} to default '{rule.fallback}'")
         return
 
     value = str(row[rule.name]).strip()
@@ -99,7 +95,9 @@ def _heal_categorical(
         )
 
 
-def heal(raw_data: Dict[str, Any], spec: DomainSpec) -> Tuple[Dict[str, Any], List[str]]:
+def heal(
+    raw_data: Dict[str, Any], spec: DomainSpec
+) -> Tuple[Dict[str, Any], List[str]]:
     """
     Repair `raw_data` against `spec`.
 
